@@ -54,6 +54,7 @@ ANCHORS = int(__import__("os").environ.get("LAD_ANCHORS", "3"))
 PROBE = __import__("os").environ.get("LAD_PROBE", "1") == "1"
 PART_PRESET = __import__("os").environ.get("LAD_PART_PRESET", "ultrafast")
 PART_CRF = __import__("os").environ.get("LAD_PART_CRF", "18")
+MIN_DUR = float(__import__("os").environ.get("LAD_MIN_DUR", "15.6"))
 
 
 def mid_var(i):
@@ -658,7 +659,7 @@ def build(ep: int):
     total = sum(v1 - v0 for v0, v1, _, _, _, _ in tl)
     extra = 0
     while total < 15.2 and extra < 20:      # 15 s campaign floor
-        lo, hi = max(0.0, start - 4 - extra), min(660.0, end + 6 + extra)
+        lo, hi = max(0.0, start - 6 - extra), min(660.0, end + 10 + extra)
         more = [r for r in segments_of(words_in(SRC, lo, hi), lo, hi)
                 if has_face(SRC, r[0], r[1]) and not any(abs(r[0] - x[0]) < 0.5 for x in tl)]
         if not more:
@@ -672,34 +673,9 @@ def build(ep: int):
     total = sum(v1 - v0 for v0, v1, _, _, _, _ in tl)
     release_asr()
 
-    # captions: real word times -> timeline time
-    cuts_t, tcur = [], 0.0
-    for i, (v0, v1, _, _, a0, a1) in enumerate(tl):
-        if i:
-            cuts_t.append(tcur)
-        tcur += a1 - a0
-    t_map = {}
-    acc = 0.0
-    for v0, v1, _, _, a0, a1 in tl:
-        for w in ws:
-            if a0 - 0.02 <= w["t"] < a0 + (a1 - a0) and w["t"] not in t_map:
-                t_map[w["t"]] = acc + (w["t"] - a0)
-        acc += a1 - a0
-    mapped = [dict(t=t_map.get(w["t"], None), e=None, w=w["w"]) for w in ws if w["t"] in t_map]
-    for i, m in enumerate(mapped):
-        nx = next((x["t"] for x in mapped[i + 1:] if x["t"] is not None), m["t"] + 0.45)
-        m["e"] = min(nx, m["t"] + 0.65) if nx else m["t"] + 0.4
-    mapped = [m for m in mapped if m["t"] is not None]
-
-    sfx = tmp / "sfx.wav"
-    sfx_track(tcur, cuts_t[1:], sfx)
-    ass = tmp / "caps.ass"
-    ass_file(ass, mapped, lambda t: t, tcur, hook,
-             pick_name(hook, speaker(SRC, start, 2.2) or plan_name))
-
     # render shot by shot; verify each one and retry with another crop if the
     # frame misses the person entirely (2 GB box: no giant filter graph)
-    parts, skipped, retried = [], 0, 0
+    parts, kept_shots, skipped, retried = [], [], 0, 0
     for i, (v0, v1, face, var, a0, a1) in enumerate(tl):
         ts = (v0 + 0.15, (v0 + v1) / 2, max(v0 + 0.2, v1 - 0.25))
         anchors = [f for f in (frame_face(SRC, t) for t in ts) if f]
@@ -750,6 +726,7 @@ def build(ep: int):
             best[1].unlink(missing_ok=True)
             continue
         parts.append(best[1])
+        kept_shots.append((v0, v1))
     # dropping empty shots can push the clip under the 15 s floor -> backfill
     def dur_of(files):
         d = 0.0
@@ -763,7 +740,7 @@ def build(ep: int):
 
     tried = {round(v0, 1) for v0, _, _, _, _, _ in tl}
     guard = 0
-    while dur_of(parts) < 15.6 and guard < 12:
+    while dur_of(parts) < MIN_DUR and guard < 24:
         guard += 1
         segs_all = json.load(open(ROOT / "assets" / "transcript_small.json"))
         near = sorted(
@@ -796,12 +773,43 @@ def build(ep: int):
                 f.unlink(missing_ok=True)
             if made:
                 parts.append(made)
+                kept_shots.append((v0, v1))
                 tried.add(round(v0, 1))
                 added = True
-                if dur_of(parts) >= 15.6:
+                if dur_of(parts) >= MIN_DUR:
                     break
         if not added:
             break
+
+    # captions + sfx are built from the shots that ACTUALLY made it into the
+    # file (a dropped shot used to shift every caption after it)
+    shots_final = [(v0, v1) for (v0, v1) in kept_shots]
+    tcur = sum(v1 - v0 for v0, v1 in shots_final)
+    cuts_t = []
+    acc = 0.0
+    for i, (v0, v1) in enumerate(shots_final):
+        if i:
+            cuts_t.append(acc)
+        acc += v1 - v0
+    t_map = {}
+    acc = 0.0
+    for v0, v1 in shots_final:
+        for w in ws:
+            if (v0 - 0.02) <= w["t"] < v1 and w["t"] not in t_map:
+                t_map[w["t"]] = acc + (w["t"] - v0)
+        acc += v1 - v0
+    mapped = [dict(t=t_map[w["t"]], e=None, w=w["w"]) for w in ws if w["t"] in t_map]
+    for i, m in enumerate(mapped):
+        nx = next((x["t"] for x in mapped[i + 1:]), m["t"] + 0.45)
+        m["e"] = min(nx, m["t"] + 0.65)
+    mapped.sort(key=lambda m: m["t"])
+
+    sfx = tmp / "sfx.wav"
+    sfx_track(tcur, cuts_t[1:], sfx)
+    ass = tmp / "caps.ass"
+    ass_file(ass, mapped, lambda t: t, tcur, hook,
+             pick_name(hook, speaker(SRC, start, 2.2) or plan_name))
+    release_asr()
 
     lst = tmp / "list.txt"
     lst.write_text("".join(f"file '{p.resolve().as_posix()}'\n" for p in parts), encoding="utf8")

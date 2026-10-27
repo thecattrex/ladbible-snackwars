@@ -81,6 +81,9 @@ jobs:
         id: n
         run: echo "ep=$(printf %02d ${{ matrix.ep }})" >> $GITHUB_OUTPUT
       - name: render one clip
+        env:
+          LAD_MIN_DUR: "16.2"
+          LAD_MIN_COV: "0.80"
         run: |
           EP=$(printf %02d ${{ matrix.ep }})
           python3 -u bots/render_bot.py ${{ matrix.ep }} || true

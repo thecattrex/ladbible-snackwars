@@ -42,9 +42,7 @@ def main(ep: int, strict: bool = False) -> int:
                    shots=shots, runs=runs, coverage=round(cover, 3),
                    seconds=round(time.time() - t0, 1), strict=strict)
     except Exception:
-        tb = traceback.format_exc()
-        print(tb, file=sys.stderr, flush=True)
-        rec = dict(ep=ep, state="error", error=tb[-1500:],
+        rec = dict(ep=ep, state="error", error=traceback.format_exc()[-1500:],
                    seconds=round(time.time() - t0, 1), strict=strict)
     (STATUS / f"ep{ep:02d}.json").write_text(json.dumps(rec))
     print(json.dumps({k: v for k, v in rec.items() if k != "error"}))
