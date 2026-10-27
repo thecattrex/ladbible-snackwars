@@ -1,0 +1,7 @@
+src/
+clips*/
+references/
+assets/bot_status/
+assets/qc_*.jpg
+assets/_ep*/
+__pycache__/
