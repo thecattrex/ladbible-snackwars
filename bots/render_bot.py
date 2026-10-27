@@ -26,7 +26,9 @@ STATUS = ROOT / "assets" / "bot_status"
 
 def main(ep: int, strict: bool = False) -> int:
     t0 = time.time()
-    STATUS.mkdir(exist_ok=True)
+    STATUS.mkdir(parents=True, exist_ok=True)
+    (ROOT / "clips_v3").mkdir(parents=True, exist_ok=True)
+    (ROOT / "assets").mkdir(parents=True, exist_ok=True)
     (STATUS / f"ep{ep:02d}.json").write_text(
         json.dumps(dict(ep=ep, state="rendering", strict=strict, started=t0)))
     if strict:                       # fixer-bot mode: demand more of every shot
@@ -40,7 +42,6 @@ def main(ep: int, strict: bool = False) -> int:
                    shots=shots, runs=runs, coverage=round(cover, 3),
                    seconds=round(time.time() - t0, 1), strict=strict)
     except Exception:
-        import os
         tb = traceback.format_exc()
         print(tb, file=sys.stderr, flush=True)
         rec = dict(ep=ep, state="error", error=tb[-1500:],
