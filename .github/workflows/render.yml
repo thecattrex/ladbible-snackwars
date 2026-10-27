@@ -25,46 +25,47 @@ jobs:
           python-version: "3.11"
       - name: tools (no apt - it hangs on the runner image)
         run: pip install -q imageio-ffmpeg yt-dlp
-      - name: download source video
+      - name: download source video (multi-client + mirror fallbacks)
         run: |
           mkdir -p src
           URL="${{ github.event.inputs.src_url }}"
           if [ -n "$URL" ]; then
-            echo "fetching from supplied link"
-            curl -L --retry 3 --fail -o src/snackwars.mp4 "$URL" || \
-              python3 - "$URL" <<'PY'
-          import sys, re, subprocess, urllib.request
-          url = sys.argv[1]
-          m = re.search(r"/d/([A-Za-z0-9_-]{20,})", url) or re.search(r"id=([A-Za-z0-9_-]{20,})", url)
-          if not m:
-              sys.exit("no drive id in link")
-          fid = m.group(1)
-          req = urllib.request.Request(
-              f"https://drive.usercontent.google.com/download?id={fid}&export=download&confirm=t",
-              headers={"User-Agent": "Mozilla/5.0"})
-          with urllib.request.urlopen(req, timeout=600) as r, open("src/snackwars.mp4", "wb") as f:
-              while chunk := r.read(1 << 20):
-                  f.write(chunk)
-          print("drive download done")
-          PY
-          else
-            python3 bots/fetch_src.py || \
-            python3 -m yt_dlp --extractor-args "youtube:player_client=android,ios,tv" \
-              -f "bv*[height<=1080]+ba/b" -o "src/src.%(ext)s" --no-playlist \
-              "https://www.youtube.com/watch?v=-jNqG2Dx1t8"
+            echo ">> supplied link"
+            curl -L --retry 3 --fail -o src/snackwars.mp4 "$URL" && exit 0
           fi
+          pip install -q curl_cffi || true
+          for client in web_safari tv_simply mweb android_vr ios tv web_embedded; do
+            for imp in "" "--impersonate chrome"; do
+              echo ">> yt-dlp client=$client $imp"
+              rm -f src/src.f*
+              python3 -m yt_dlp $imp --extractor-args "youtube:player_client=$client" \
+                -f "bv*[height<=1080]+ba/b[height<=1080]" -o "src/src.%(ext)s" \
+                --no-playlist --no-warnings --retries 2 \
+                "https://www.youtube.com/watch?v=-jNqG2Dx1t8" 2>&1 | tail -3
+              if ls src/src.f*.mp4 >/dev/null 2>&1; then
+                echo ">> got video track with $client $imp"
+                break 2
+              fi
+            done
+          done
           python3 - <<'PY'
           import subprocess, imageio_ffmpeg, pathlib, sys
           ff = imageio_ffmpeg.get_ffmpeg_exe()
           src = pathlib.Path("src/snackwars.mp4")
           if not src.exists():
-              parts = sorted(pathlib.Path("src").glob("src.f*"))
-              v = next((p for p in parts if p.suffix == ".mp4"), None)
-              a = next((p for p in parts if p.suffix == ".m4a"), None)
+              v = next(iter(sorted(pathlib.Path("src").glob("src.f*.mp4"))), None)
+              a = next(iter(sorted(pathlib.Path("src").glob("src.f*.m4a"))), None)
               if v and a:
                   subprocess.run([ff, "-y", "-i", str(v), "-i", str(a), "-c", "copy",
                                   "-movflags", "+faststart", str(src)], check=True)
-          print("source bytes:", src.stat().st_size if src.exists() else 0)
+              elif v:
+                  subprocess.run([ff, "-y", "-i", str(v), "-c", "copy",
+                                  "-movflags", "+faststart", str(src)], check=True)
+          if src.exists():
+              i = subprocess.run([ff, "-hide_banner", "-i", str(src)],
+                                 capture_output=True, text=True).stderr
+              print("source:", src.stat().st_size // 1_000_000, "MB",
+                    "1920x1080" if "1920x1080" in i else "NOT 1080p")
           sys.exit(0 if src.exists() else 1)
           PY
       - uses: actions/upload-artifact@v4
