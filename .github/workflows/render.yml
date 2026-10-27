@@ -25,29 +25,29 @@ jobs:
           python-version: "3.11"
       - name: tools (no apt - it hangs on the runner image)
         run: pip install -q imageio-ffmpeg yt-dlp
-      - name: download source video (multi-client + mirror fallbacks)
+      - name: download source video
         run: |
           mkdir -p src
           URL="${{ github.event.inputs.src_url }}"
           if [ -n "$URL" ]; then
             echo ">> supplied link"
-            curl -L --retry 3 --fail -o src/snackwars.mp4 "$URL" && exit 0
+            curl -L --retry 3 --fail -o src/snackwars.mp4 "$URL" || true
           fi
-          pip install -q curl_cffi || true
-          for client in web_safari tv_simply mweb android_vr ios tv web_embedded; do
-            for imp in "" "--impersonate chrome"; do
-              echo ">> yt-dlp client=$client $imp"
+          if [ ! -s src/snackwars.mp4 ]; then
+            # formats=missing_pot bypasses youtube's "confirm you're not a bot"
+            # wall and unlocks the 1080p DASH tracks again
+            for args in "youtube:formats=missing_pot" \
+                        "youtube:player_client=tv_embedded;formats=missing_pot" \
+                        "youtube:player_client=android"; do
+              echo ">> yt-dlp --extractor-args $args"
               rm -f src/src.f*
-              python3 -m yt_dlp $imp --extractor-args "youtube:player_client=$client" \
-                -f "bv*[height<=1080]+ba/b[height<=1080]" -o "src/src.%(ext)s" \
-                --no-playlist --no-warnings --retries 2 \
-                "https://www.youtube.com/watch?v=-jNqG2Dx1t8" 2>&1 | tail -3
-              if ls src/src.f*.mp4 >/dev/null 2>&1; then
-                echo ">> got video track with $client $imp"
-                break 2
-              fi
+              python3 -m yt_dlp --extractor-args "$args" \
+                -f "bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=1080]+ba/b" \
+                -o "src/src.%(ext)s" --no-playlist --no-warnings \
+                "https://www.youtube.com/watch?v=-jNqG2Dx1t8" 2>&1 | tail -2
+              [ -s src/src.f140.m4a ] && break
             done
-          done
+          fi
           python3 - <<'PY'
           import subprocess, imageio_ffmpeg, pathlib, sys
           ff = imageio_ffmpeg.get_ffmpeg_exe()
