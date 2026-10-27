@@ -1,0 +1,93 @@
+name: render-clips
+
+# One runner per clip => 20 clips in parallel, each with its own 4 cores / 16 GB.
+# Free on a public repo. No OOM, no queue.
+
+on:
+  workflow_dispatch:
+    inputs:
+      eps:
+        description: "episode numbers e.g. 1 2 3 (blank = all 20)"
+        required: false
+        default: ""
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: ffmpeg + yt-dlp
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -q imageio-ffmpeg yt-dlp
+      - name: download source video
+        run: |
+          python3 bots/fetch_src.py || \
+          python3 -m yt_dlp --extractor-args "youtube:player_client=android,ios,tv" \
+            -f "bv*[height<=1080]+ba/b" -o "src/src.%(ext)s" --no-playlist \
+            "https://www.youtube.com/watch?v=-jNqG2Dx1t8"
+          python3 - <<'PY'
+          import subprocess, imageio_ffmpeg, pathlib, sys
+          ff = imageio_ffmpeg.get_ffmpeg_exe()
+          src = pathlib.Path("src/snackwars.mp4")
+          if not src.exists():
+              parts = sorted(pathlib.Path("src").glob("src.f*"))
+              v = next((p for p in parts if p.suffix == ".mp4"), None)
+              a = next((p for p in parts if p.suffix == ".m4a"), None)
+              if v and a:
+                  subprocess.run([ff, "-y", "-i", str(v), "-i", str(a), "-c", "copy",
+                                  "-movflags", "+faststart", str(src)], check=True)
+          print("source bytes:", src.stat().st_size if src.exists() else 0)
+          sys.exit(0 if src.exists() else 1)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: src-video
+          path: src/snackwars.mp4
+          retention-days: 2
+
+  render:
+    needs: source
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        ep: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: deps
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu
+          pip install -q opencv-python-headless==4.11.0.86 imageio-ffmpeg numpy yt-dlp
+      - uses: actions/download-artifact@v4
+        with:
+          name: src-video
+          path: src
+      - name: render one clip
+        run: |
+          python3 -u bots/render_bot.py ${{ matrix.ep }} || true
+          test -s clips_v3/ep${{ matrix.ep }}.mp4 || python3 -u bots/render_bot.py ${{ matrix.ep }} --strict
+      - name: reviewer bot
+        run: |
+          python3 bots/review_bot.py ${{ matrix.ep }}
+          python3 - <<'PY'
+          import json
+          ok = json.load(open("assets/bot_status/ep%02d_review.json" % ${{ matrix.ep }}))["ok"]
+          raise SystemExit(0 if ok else 1)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: clip-ep${{ matrix.ep }}
+          path: |
+            clips_v3/ep${{ matrix.ep }}.mp4
+            assets/qc_ep${{ matrix.ep }}.jpg
+            assets/bot_status/ep${{ matrix.ep }}_review.json
+          if-no-files-found: warn
