@@ -25,48 +25,30 @@ jobs:
           python-version: "3.11"
       - name: tools (no apt - it hangs on the runner image)
         run: pip install -q imageio-ffmpeg yt-dlp
-      - name: download source video
+      - name: download source video (from release asset - youtube blocks runner IPs)
         run: |
           mkdir -p src
           URL="${{ github.event.inputs.src_url }}"
           if [ -n "$URL" ]; then
-            echo ">> supplied link"
             curl -L --retry 3 --fail -o src/snackwars.mp4 "$URL" || true
           fi
           if [ ! -s src/snackwars.mp4 ]; then
-            # formats=missing_pot bypasses youtube's "confirm you're not a bot"
-            # wall and unlocks the 1080p DASH tracks again
-            for args in "youtube:formats=missing_pot" \
-                        "youtube:player_client=tv_embedded;formats=missing_pot" \
-                        "youtube:player_client=android"; do
-              echo ">> yt-dlp --extractor-args $args"
-              rm -f src/src.f*
-              python3 -m yt_dlp --extractor-args "$args" \
-                -f "bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=1080]+ba/b" \
-                -o "src/src.%(ext)s" --no-playlist --no-warnings \
-                "https://www.youtube.com/watch?v=-jNqG2Dx1t8" 2>&1 | tail -2
-              [ -s src/src.f140.m4a ] && break
-            done
+            curl -L --retry 5 --fail -o src/snackwars.mp4 \
+              "https://github.com/thecattrex/ladbible-snackwars/releases/download/src-v1/snackwars.mp4"
           fi
+          ls -la src/
           python3 - <<'PY'
           import subprocess, imageio_ffmpeg, pathlib, sys
           ff = imageio_ffmpeg.get_ffmpeg_exe()
           src = pathlib.Path("src/snackwars.mp4")
           if not src.exists():
-              v = next(iter(sorted(pathlib.Path("src").glob("src.f*.mp4"))), None)
-              a = next(iter(sorted(pathlib.Path("src").glob("src.f*.m4a"))), None)
-              if v and a:
-                  subprocess.run([ff, "-y", "-i", str(v), "-i", str(a), "-c", "copy",
-                                  "-movflags", "+faststart", str(src)], check=True)
-              elif v:
-                  subprocess.run([ff, "-y", "-i", str(v), "-c", "copy",
-                                  "-movflags", "+faststart", str(src)], check=True)
-          if src.exists():
-              i = subprocess.run([ff, "-hide_banner", "-i", str(src)],
-                                 capture_output=True, text=True).stderr
-              print("source:", src.stat().st_size // 1_000_000, "MB",
-                    "1920x1080" if "1920x1080" in i else "NOT 1080p")
-          sys.exit(0 if src.exists() else 1)
+              sys.exit("source missing")
+          i = subprocess.run([ff, "-hide_banner", "-i", str(src)],
+                             capture_output=True, text=True).stderr
+          dur = [l for l in i.splitlines() if "Duration" in l]
+          print("source:", src.stat().st_size // 1_000_000, "MB",
+                "1920x1080" if "1920x1080" in i else "NOT 1080p", dur[0].strip() if dur else "")
+          sys.exit(0 if "1920x1080" in i else 1)
           PY
       - uses: actions/upload-artifact@v4
         with:
