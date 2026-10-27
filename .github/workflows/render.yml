@@ -77,10 +77,15 @@ jobs:
         with:
           name: src-video
           path: src
+      - name: episode number
+        id: n
+        run: echo "ep=$(printf %02d ${{ matrix.ep }})" >> $GITHUB_OUTPUT
       - name: render one clip
         run: |
+          EP=$(printf %02d ${{ matrix.ep }})
           python3 -u bots/render_bot.py ${{ matrix.ep }} || true
-          test -s clips_v3/ep${{ matrix.ep }}.mp4 || python3 -u bots/render_bot.py ${{ matrix.ep }} --strict
+          test -s clips_v3/ep$EP.mp4 || python3 -u bots/render_bot.py ${{ matrix.ep }} --strict
+          ls -la clips_v3/ || true
       - name: reviewer bot
         run: |
           python3 bots/review_bot.py ${{ matrix.ep }}
@@ -94,7 +99,7 @@ jobs:
         with:
           name: clip-ep${{ matrix.ep }}
           path: |
-            clips_v3/ep${{ matrix.ep }}.mp4
-            assets/qc_ep${{ matrix.ep }}.jpg
-            assets/bot_status/ep${{ matrix.ep }}_review.json
+            clips_v3/ep${{ steps.n.outputs.ep }}.mp4
+            assets/qc_ep${{ steps.n.outputs.ep }}.jpg
+            assets/bot_status/ep${{ steps.n.outputs.ep }}_review.json
           if-no-files-found: warn
