@@ -190,6 +190,10 @@ def main() -> int:
         else:
             split.append(p)
     pieces = split
+    if os.environ.get("PIECE_DEBUG"):
+        print("AFTER_BEAT " + json.dumps([{"in": p["src_in"], "out": p["src_out"],
+                                           "seg": p["segment"]} for p in pieces]),
+              file=sys.stderr)
 
     # the picture must tile the audio exactly: same first frame, same last frame
     total_pic = round(sum(p["src_out"] - p["src_in"] for p in pieces), 3)
@@ -253,6 +257,12 @@ def main() -> int:
     store.artifact(cid, f"cropaudit_{cid_clip}", audit)
     if audit["moved"] or audit["split"] or audit["no_face"]:
         print(json.dumps({"crop_audit": audit}, indent=1), file=sys.stderr)
+    if os.environ.get("PIECE_DEBUG"):
+        print(json.dumps([{"i": i, "in": round(x["src_in"], 3), "out": round(x["src_out"], 3),
+                           "kind": x["shot"]["kind"], "seg": x["segment"],
+                           "split": bool(x.get("split"))} for i, x in enumerate(pieces)],
+                         indent=1), file=sys.stderr)
+
     # ---- frame grid: a cut can only land on a source frame.
     # Un-snapped cuts made every piece render one frame long, and the error adds
     # up across nine pieces: the picture ended 0.4 s behind the audio, which is
@@ -264,15 +274,27 @@ def main() -> int:
 
     for p in pieces:
         p["src_in"], p["src_out"] = snap(p["src_in"]), snap(p["src_out"])
-    for a, b in zip(pieces, pieces[1:]):    # no gap, no overlap at a joint
-        b["src_in"] = a["src_out"]
+    pieces = [p for p in pieces if p["src_out"] > p["src_in"]]   # never a negative piece
+    # close sub-frame gaps only *inside* a segment. Between segments there is an
+    # intentional jump in the source (the filler that was cut out), and forcing the
+    # joint closed there pulls the removed words straight back into the picture.
+    for a, b in zip(pieces, pieces[1:]):
+        if a["segment"] == b["segment"] and 0 < b["src_in"] - a["src_out"] < 0.5:
+            b["src_in"] = a["src_out"]
+    pieces = [p for p in pieces if p["src_out"] - p["src_in"] > 0]
+    bad = [p for p in pieces if p["src_out"] <= p["src_in"]]
+    assert not bad, f"inverted pieces: {bad}"
     total = round(sum(p["src_out"] - p["src_in"] for p in pieces), 4)
     # the timeline length has to sit on the same grid, or the last cut cannot
     # land on a frame and every piece re-rounds
     want = round(round(float(plan["duration"]) * grid) / grid, 4)
     if abs(total - want) > 0.0001:
-        # absorb the rounding on the last piece: a frame either way on the final
-        # cut is invisible, a drifted timeline is not
+        # absorb rounding on the last piece: a frame either way on the final cut is
+        # invisible, a drifted timeline is not. A big difference is a plan bug, not
+        # rounding, and must stop the render instead of squashing the last shot.
+        if abs(total - want) > 0.5:
+            raise SystemExit(f"picture {total}s vs audio {want}s — plan disagrees, "
+                             f"not a rounding error")
         pieces[-1]["src_out"] = round(pieces[-1]["src_out"] + (want - total), 4)
     total = round(sum(p["src_out"] - p["src_in"] for p in pieces), 4)
     assert abs(total - want) < 1e-6, f"picture {total} != audio {want}"
@@ -282,6 +304,10 @@ def main() -> int:
         p["out_in"] = round(out_t, 3)
         p["out_out"] = round(out_t + (p["src_out"] - p["src_in"]), 3)
         out_t = p["out_out"]
+    if os.environ.get("PIECE_DEBUG"):
+        print("FINAL " + json.dumps([{"i": i, "in": p["src_in"], "out": p["src_out"],
+                                      "dur": round(p["src_out"] - p["src_in"], 3)}
+                                     for i, p in enumerate(pieces)]), file=sys.stderr)
 
     # ---- camera: a moving window, not a stack of stills.
     # In the reference edit the frame glides from one speaker to the next across

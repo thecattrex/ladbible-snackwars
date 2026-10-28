@@ -1,106 +1,81 @@
-# Craft notes — what makes an edit read as human
+# CRAFT — locked rules for the CLIPFARM pipeline
 
-Collected while building the graphics and sound layers. Sources are listed so the
-reasoning can be re-checked, not repeated from memory.
+Approved reference: `DEMO_c557_v6.mp4` and `DEMO_c1407_v1.mp4`.
+Every rule below was confirmed on a rendered clip and measured in D9. The master prompt
+(`system/MASTER_PROMPT.md`, section J9) points here; nothing in this file is optional.
 
-## Picture
-- **Change the frame every 2-3 s.** One static talking-head shot gives a
-  scrolling viewer nothing to stay for; a meaningful visual shift (zoom, insert,
-  overlay, angle) beats a jump cut every 2 s, which causes fatigue.
-- **Progressive zoom**: tighten 1.5-2 % per second over a clip instead of holding
-  one size (`clip-forge.io` retention playbook).
-- **Punch-in on the line that matters**, not on every line.
-- **B-roll / graphics on the lines that earn it** — two or three per clip, not a
-  carpet (`quickreel.io`). A number gets a counter; a comparison gets a card.
-- **Keep the face in the upper-middle third**; text goes under the chin, never
-  over the eyes or mouth.
-- Documentary lower-thirds read as human: a soft gradient over the footage, a
-  kicker, one big value, a thin accent rule. A hard rounded panel with a border
-  reads as app UI — i.e. as machine output.
+## 1. Sync — one clock for picture and sound
+- Snap every cut to the source frame grid (`edit.source_fps`, 24 here). An un-snapped cut
+  renders one frame long per piece and the error accumulates: that is heard as the video
+  dragging behind the voice, worst at the end of the clip.
+- Render an exact frame count per piece (`-frames:v N`), concatenate at the source rate,
+  then convert the frame rate **once** on the finished timeline.
+- Cut the audio from the same EDL (`atrim` on the same boundaries) so it is sample-locked
+  to the picture by construction.
+- QA gate: picture duration == timeline duration to the frame, cut positions within one
+  frame of the plan, and a correlation check of the clip audio against the mix (target 0 ms).
 
-## Type
-- One condensed display face for numbers (Anton), one grotesque for labels
-  (Archivo Black / Inter). Never the system default.
-- Kicker + value + unit + rule: a viewer reads it in one glance.
-- Kinetic captions: 1-3 words, heavy, keyword in the brand colour, and a small
-  rise on entry (~80 ms) rather than a fade.
-- Stagger layered elements ~100-150 ms apart; ease-in-out, never linear
-  (`trydemotion.com` kinetic typography notes).
+## 2. Camera — follow the speaker, keep the frame alive
+- One crop per shot, placed on the person who is speaking.
+- A wide two-shot is a **moving window**: ease-out glide (~0.5 s) from the speaker who
+  finished to the one who answers, plus a slow drift (14 px) on static pieces. A locked-off
+  crop per shot reads as a photo slideshow.
+- A long take gets a punch-in at its midpoint so the frame changes size every ~4 s.
+- Movement follows the turn-taking; robotic drift unrelated to the speech is just as wrong.
+- **Split frame** only when both people genuinely talk at once: two panels, panels zoomed to
+  the face (a full-height slice leaves dead curtain above both heads), 5 px brand-colour
+  divider that reads as a deliberate lens line.
+- **Crop audit before render**: the face track is a summary, so every planned box is
+  re-checked on decoded frames and moved onto the nearest face. Split a piece where the
+  face jumps; never split anything shorter than 0.6 s.
+- **Full-bleed.** The picture fills 1080×1920. No bands, no smaller frame inside the frame.
 
-## Sound
-- **Whoosh straddles** a transition: starts before the cut, peaks on the frame
-  change, tails after.
-- **Impact lands exactly on** the cut or the frame a card appears. 50 ms early
-  reads as sloppy.
-- **Riser builds into the moment and stops dead on it.** The abrupt stop is the
-  effect.
-- Effects sit at roughly half the voice level (about -6 dB relative); if a viewer
-  notices the whoosh, it is too loud.
-- Sound only the cuts that matter — section changes, punch-ins, reveals. Sounding
-  every join turns the mix into a percussion track.
-- Bed gets sidechained off the voice, not just turned down.
+## 3. Graphics — type is the graphic
+- One idea per card: kicker (white small caps), value in the display face, unit in brand
+  colour, one line of context. Nothing else.
+- Numbers appear **whole**, cut in. Never count up from zero.
+- Type **wipes on** from its own left edge in 120–160 ms, sits still, is cut away.
+- One marker swipe per card, behind the operative words only, dark text on the brand
+  colour, edges slightly rough. Never underline a whole line.
+- No icons, no dotted "data" grids, no illustrated banknotes, no stock photos as
+  decoration. Lime on a grey suit disappears — labels are white with a drop shadow.
+- Layout varies by card kind (value / statement / question / equation). Seven cards on one
+  skeleton reads as a template whatever the typeface is.
+- Cards sit in a lane that clears the face, the caption lane and the source's own lower
+  third. Gaps between cards; never one card after another on a metronome.
+- Light grain and the same grade on picture and cards, so graphics sit inside the footage.
 
-## What still reads as "AI made this"
-- Cards that appear on a metronome; human editors leave gaps.
-- Generic icon sets and templates.
-- Captions that never change weight or size.
-- A whoosh on every single cut.
+## 4. Captions and colour
+- Three-word groups, heavy grotesque (Archivo Black), keyword in the brand colour with a
+  small pop, outline only (a shadow smears on a dark suit).
+- One consistent lane that clears the source's lower third and the graphic lane.
+- Highlight selectively; a caption that never changes weight reads as machine output.
+- Grade: contrast ~1.08, saturation ~1.10, vignette, light grain. No crushed blacks, no
+  plastic skin, no heavy sharpening.
 
-## Second pass — reference-driven corrections
+## 5. Sound
+- Dialogue-led clips are mixed **clean**: no music bed (the client's "annoying background
+  sound"), denoise + high-pass, then loudness to −16 LUFS / −1 dBTP.
+- Purposeful SFX only, on picture events (card lands, punch-in, split frame): a soft impact
+  at about −21 dB, ~8 cues on a 30 s clip. No riser on claims, no whoosh on every cut.
+- Leave silence where the sentence needs it.
 
-After watching a reference short the client supplied (multi-cam podcast clip):
-- **Follow the speaker with the camera, not with cuts.** Re-watching the
-  reference frame by frame (0.25 s apart) shows there is no cut inside the wide
-  shot: the frame **glides** from whoever was talking to whoever answers, then
-  keeps drifting. A cut is a last resort — reserve it for a genuine change of
-  setup in the source (wide → close-up).
-- **A wide two-shot with two faces = a moving window.** One crop per speaker, and
-  the crop travels across the shot in ~0.5 s with an ease-out. Static per-shot
-  crops look like a photo slideshow, which is what got the first cut rejected.
-- **Split frame only for genuine overlap** (both people talking at once): two
-  tight panels with a brand-colour divider. Panel crops are zoomed to the face —
-  a full-height slice leaves a band of empty curtain above both heads.
-- **No music bed.** The reference runs clean dialogue plus a few transition
-  effects. A synthesised bed under speech was the "annoying background sound";
-  ambience that is not the source audio is out.
-- **Effects only where a picture event happens** — one soft impact as a card
-  lands. No riser on claims, no whoosh on every cut (the reference has none).
-- **No letterbox bands.** Blank bands above and below the picture were tried and
-  the client rejected them: sub-9:16 picture inside a 9:16 frame reads as
-  "compressed". Delivery is full-bleed 1080x1920 — the whole frame is picture.
-  Title/watermark live over the picture at the top, cards mid-frame, captions low.
-- **Crop audit is mandatory.** A face track sampled at 4 fps is a summary; when
-  the source cuts to a new setup between two samples the planned crop lands on an
-  empty desk. Every crop is checked against the real frames before render and
-  moved onto the nearest face (see `orchestrator/cropaudit.py`).
-- **A still image input to ffmpeg must be looped** (`-loop 1 -framerate <fps>`).
-  A one-frame stream composited with `overlay` silently stops appearing after
-  ~12 s, which took the watermark off the back half of a render.
+## 6. Watermark and delivery
+- The client watermark is composited for the **whole clip**. A still image input must be
+  looped (`-loop 1 -framerate <fps>`); a one-frame stream silently stops compositing
+  after ~12 s.
+- 1080×1920 H.264, 30 fps, AAC, `+faststart`, frame-locked to the timeline.
+- QA with instruments, not opinions: EBU loudness and true peak, full decode-error pass,
+  watermark colour probe, faces per frame and longest faceless run, text-over-face check,
+  crop-audit result. Report the numbers; never claim a check that was not run.
 
-## Third pass — sync and the "still looks AI" tell
-
-**Sound and picture must be cut on the same frame.**
-- Every cut is snapped to the source frame grid before anything renders
-  (`source_fps`, 24 here). Off-grid cuts made every piece render one frame long,
-  and nine pieces stacked 0.4 s of picture lag against the audio — heard as a
-  clip that drags behind the voice, worst at the end.
-- Each piece renders an exact frame count (`-frames:v N`), the pieces are
-  concatenated at the source rate, and the 24 → 30 conversion happens **once**
-  on the finished timeline. Converting per piece rounds per piece.
-- Audio is cut from the same EDL with `atrim` on the same boundaries, so it is
-  sample-locked to the picture by construction, not by eye.
-
-**Type, not icons.**
-- No icon sets, no dotted grids, no illustrated banknotes, no neon chips. The
-  graphics are type + the footage, which is what a podcast editor cuts.
-- Numbers appear whole on a cut. Counting up from zero looks like a template and
-  can flash a wrong number on screen (`$1,812` on the way to `$10,000`).
-- Type **wipes on** from its own left edge in ~120–160 ms, sits still, and is cut
-  off. Fades and rise-ins are the software look.
-- One marker swipe per card, behind the operative words only, dark text on the
-  lime, edges slightly rough and angled a few degrees. Never underline the whole
-  line.
-- Labels are white small caps with a drop shadow, not lime: lime on a grey suit
-  disappears. Lime stays for the accent tick, the unit, and the swipe.
-- Layout varies by card kind (value / statement / question / equation). One
-  skeleton repeated seven times reads as a template regardless of the typeface.
+## 7. Banned — rejected by the client or proven wrong in execution
+- Letterbox / black bands ("looks compressed"); the band module is deleted, not disabled.
+- Locked-off crop per shot; cutting between faces inside one wide shot.
+- Icon sets, dotted grids, illustrated banknotes, decorative stock photos.
+- Numbers that count up from zero.
+- A synthesised music bed under speech.
+- Un-snapped cuts, per-piece frame-rate conversion, forcing segment joints closed across a
+  cut (that re-inserts the dialogue the editor removed).
+- A one-frame still image as a compositing input without a loop.
+- Claiming a QA check that was not measured.

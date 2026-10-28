@@ -29,7 +29,7 @@ import imageio_ffmpeg
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from orchestrator import store, timeline, graphics, motion, bands  # noqa: E402
+from orchestrator import store, timeline, graphics, motion  # noqa: E402
 
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 W, H = 1080, 1920
@@ -245,12 +245,9 @@ def main() -> int:
         "number_pop": info["pop"], "hook_box": info["hook_box"],
         "face_box_hook_window": info["face_box"]})
 
-    # ---- letterbox: blank bands carry the title and what the clip is about
-    band_spec = brief.get("bands") or {}
-    band_files = bands.render(store.campaign_dir(cid), clip, band_spec) if band_spec else None
-    vid_y = band_files["video_y"] if band_files else 0
-    vid_h = band_files["video_h"] if band_files else H
-    store.artifact(cid, f"bands_{clip}", band_files or {"none": True})
+    # full-bleed only: the client rejected letterbox bands ("looks compressed"), so the
+    # picture fills the whole frame and there is no code path that can shrink it
+    vid_y, vid_h = 0, H
 
     wmc = dict(brief.get("brand_rules", {}).get("watermark", {}))
     wmc.update(brief.get("watermark", {}) or {})
@@ -261,20 +258,6 @@ def main() -> int:
     pos = wmc.get("position", "top-center")
     wm_off = int(wmc.get("margin_top", 22))
     wm_x = {"top-left": "34", "top-right": "W-w-34"}.get(pos, "(W-w)/2")
-    if band_files:
-        # with bands on, the watermark lives in the top band: on screen for the
-        # whole clip and fully readable, without eating the picture area
-        from PIL import Image as _Img
-        top_band = _Img.open(band_files["top"]).convert("RGBA")
-        wm_img = _Img.open(wm).convert("RGBA")
-        tw = int(wmc.get("band_width", 330))
-        wm_img = wm_img.resize((tw, int(tw * wm_img.height / wm_img.width)), _Img.LANCZOS)
-        top_band.alpha_composite(wm_img, (top_band.width - tw - 34,
-                                          int(wmc.get("band_y", 40))))
-        band_files["top"] = str(Path(band_files["top"]).with_name(
-            Path(band_files["top"]).stem + "_wm.png"))
-        top_band.save(band_files["top"])
-
     grade = brief.get("grade", {})
     fparts = [
         f"[0:v]scale={W}:{vid_h}:flags=lanczos,setsar=1,"
@@ -285,13 +268,10 @@ def main() -> int:
         f"[2:v]scale={wm_w}:-2[wm]",
         f"[vid][wm]overlay={wm_x}:{wm_off}:format=auto[v1]",
     ]
-    if band_files:
-        fparts.append("[3:v][v1][4:v]vstack=inputs=3[canvas]")
-    else:
-        fparts.append("[v1]copy[canvas]")
+    fparts.append("[v1]copy[canvas]")
     last = "canvas"
     for i, c in enumerate(cards):
-        idx = i + (5 if band_files else 3)
+        idx = i + 3
         fparts.append(f"[{idx}:v]setpts=PTS+{c['start']}/TB[g{i}]")
         fparts.append(f"[{last}][g{i}]overlay=x={c['x']}:y={c['y']}"
                       f":enable='between(t,{c['start']},{c['end']})'"
@@ -306,8 +286,6 @@ def main() -> int:
                     # a still image must be looped: a one-frame stream + overlay's
                     # eof_action silently stops compositing after ~12 s
                     "-loop", "1", "-framerate", str(fps), "-i", str(wm),
-                    *(["-i", band_files["top"], "-i", band_files["bottom"]]
-                      if band_files else []),
                     *[x for c in cards for x in ("-i", c["path"])],
                     "-filter_complex", fc,
                     "-map", "[v]", "-map", "1:a", "-t", f"{dur:.3f}",
@@ -320,7 +298,6 @@ def main() -> int:
                       "caption_groups": info["groups"], "hook": hook,
                       "graphics": [{"kind": c["kind"], "start": c["start"],
                                     "end": c["end"], "y": c["y"]} for c in cards],
-                      "bands": band_files,
                       "video_area": {"y": vid_y, "h": vid_h},
                       "number_pop": info["pop"],
                       "size_mb": round(out.stat().st_size / 1e6, 1)}, indent=1))

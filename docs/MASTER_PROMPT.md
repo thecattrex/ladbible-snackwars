@@ -1,7 +1,12 @@
 # Long Video to 20 Strong Clips — Verified Method and Master Prompt
 
-Version 2 — Updated: 28 October 2026.
-Purpose: design a reusable editing workflow. No source video was downloaded, processed, edited, published, or used to run a campaign for this report.
+Version 3 — Updated: 28 October 2026.
+Purpose: design a reusable editing workflow. Campaign 1 (CLIPFARM x HIGGSFIELD, 20VC /
+Alex Mashrabov) has now been run on this document, so the craft rules in J–L are no
+longer only a design: they are the rules that were executed and approved. Every rule
+the client confirmed is listed once in **J9** and is mandatory for later campaigns;
+every approach the client rejected is listed at the end of J9 as banned and must not be
+reintroduced. Detailed craft reference: `clipper/docs/CRAFT.md`.
 
 ## How to use this updated file
 
@@ -509,7 +514,7 @@ These profiles are suggested starting directions, not platform rules.
 
 | Source type | Primary editing priority | Useful choices | Common failure to avoid |
 | --- | --- | --- | --- |
-| Podcast/interview | Clear speaker meaning and authentic interaction | Speaker reframes, meaningful reactions, concise context labels | Jumping between faces on every word |
+| Podcast/interview | Clear speaker meaning and authentic interaction | Speaker reframes, a camera that **glides** to whoever is talking, meaningful reactions, concise context labels | Jumping between faces on every word; a wide two-shot cut like a slideshow |
 | Educational/tutorial | Comprehension and observable steps | Screen details, demonstrations, simple labels, before/after evidence | Covering the relevant action with stock footage |
 | Comedy | Timing and the actual joke | Setup trims, retained pauses, reaction holds, selective SFX | Revealing the punchline early or cutting the reaction |
 | Emotional story | Human expression and believable rhythm | Restrained music, longer holds, clean captions | Aggressive zooms or cheerful sound effects |
@@ -549,7 +554,20 @@ Write a short style brief: intended audience, pace, caption style, color directi
 - Preview the crop in motion, including turns, gestures, entrances, and rapid action.
 - Keep essential facial expression, hands, demonstration area, subtitles, and source labels visible.
 - Use a two-person layout, split screen, inset, or wider composition when interaction requires it.
-- Prefer a stable shot over unnecessary automatic camera movement.
+- Frame each shot on the person who is speaking, and keep the frame alive: a wide
+  two-shot is reframed as a **moving window** that glides (ease-out, ~0.5 s) from the
+  speaker who just finished to the one who answers, with a slow drift in between. A
+  locked-off crop per shot reads as a photo slideshow and was rejected by the client.
+- Movement must be motivated: it follows the turn-taking, a punch-in on the point, or a
+  slow drift. Robotic lateral drift with no relation to the speech is equally wrong.
+- When both people genuinely talk at once, use a split frame with a brand-colour
+  divider, panels zoomed to the face, instead of choosing one of them.
+- **Audit every crop against real frames before rendering.** A face track sampled at a
+  few frames per second is a summary; when the source changes setup between two samples
+  the planned crop lands on an empty chair or desk. Re-detect on the actual decoded
+  window and move the box onto the nearest face.
+- Delivery is full-bleed for the requested ratio. Do not put the picture inside a
+  smaller frame with blank bands; that reads as a compressed clip.
 - Review tracking at shot boundaries and occlusions; repair bad keyframes manually when the tool permits.
 - Do not imply eye contact or a reaction sequence that did not occur.
 - Assess actual remaining resolution after cropping; do not invent image detail through upscale claims.
@@ -581,6 +599,16 @@ For every added effect, record the purpose and consider whether a simpler change
 - Give demonstrations and charts enough screen time to be understood.
 - Record start/end, asset ID, crop, placement, source/licensing, and whether it is illustrative or evidentiary.
 - Do not let an insert hide the only visual proof of a claim.
+- **For a talking-head clip, type is the graphic.** A label, a number or one marked
+  phrase in the brand colour carries the explanation; icon sets, dotted "data" grids,
+  illustrated banknotes, neon chips and stock photos are the signature of a template and
+  must not be used to decorate a claim.
+- Numbers appear whole, cut in. Counting a value up from zero is a motion-graphics
+  habit: it slows reading and can display a false figure on the way.
+- Animate type by **wiping it on** from its own left edge (~120–160 ms), let it sit
+  still, then cut away. Use one marker swipe behind the operative words, not an
+  underline beneath every line. Vary the layout by card kind (value / statement /
+  question / equation) so seven cards do not look like one template repeated.
 
 ### J7. Picture lock, sound, captions, color, and final composite
 
@@ -610,6 +638,39 @@ Use a declared timeline convention, preferably zero-based output seconds with en
 
 Avoid rounding every cut independently in ways that introduce cumulative drift.
 
+### J9. Client-locked craft directives (campaign 1, approved)
+
+These came from the client's review of the first campaign and are mandatory. Any bot
+starting work after this point derives its D6–D9 behaviour from this list.
+
+**Must do**
+1. Picture and sound run at the same speed. Cut on the source frame grid, render an exact
+   frame count per piece, convert the frame rate once for the whole timeline, and cut the
+   audio from the same EDL.
+2. The camera moves to the next speaker; it does not cut between faces inside a wide shot.
+3. Follow the person who is speaking and keep them framed; audit crops against real frames.
+4. Split frame with a divider only when both people really talk at once.
+5. Full-bleed delivery. No letterbox bands, no smaller picture inside the frame.
+6. Big readable text about the clip, with the explaining word marked in the brand colour.
+7. Captions short (about three words), one lane, clear of the source's own lower third.
+8. Type-led graphics only: no icons, no counted-up numbers, type wipes on and sits still.
+9. No background music bed on dialogue-led clips; a few purposeful SFX only.
+10. Colour and grain that make graphics sit inside the footage rather than on top of it.
+11. The client watermark on screen for the whole clip, in a lane where it is never covered.
+12. The result must read as human-edited craft, not as generated decoration.
+13. Clip length comes from the campaign brief, clip count comes from the client.
+14. Every claim in a hook, caption or card is traceable to the source audio.
+
+**Banned (rejected by the client or proven wrong in execution)**
+- Letterbox / black bands around a smaller picture ("looks compressed").
+- A locked-off crop per shot (slideshow feel) and cuts between faces inside one wide shot.
+- Icon sets, dotted grids, illustrated banknotes, stock photos used as decoration.
+- Numbers that count up from zero.
+- A synthesiser music bed under speech.
+- Un-snapped cuts and per-piece frame-rate conversion (cumulative A/V drift).
+- A one-frame still image as a compositing input without a loop (it silently disappears).
+- Claiming a QA check that was not measured.
+
 ## K. D7 — Dialogue, music, and SFX
 
 ### K1. Dialogue-first audio pass
@@ -627,6 +688,9 @@ Avoid rounding every cut independently in ways that introduce cumulative drift.
 ### K2. Music selection and ducking
 
 Choose music by scene function: calm explanation, genuine suspense, comedy, celebration, or no music.
+For a dialogue-led podcast clip the default is **no music bed**; a synthesised bed under
+speech was rejected by the client as "annoying background sound". Add music only when the
+brief asks for it, and never to cover a weak edit.
 
 - Use a licensed/authorized asset and retain attribution requirements.
 - Avoid competing vocals under important dialogue.
@@ -679,6 +743,9 @@ A cue sheet is a plan; claim audio mixing completed only after the actual render
 - Highlight selectively when emphasis improves understanding.
 - Avoid simultaneous competing headline, subtitles, source chart text, logo animation, and irrelevant emojis.
 - Place labels close enough to their subject to be understood without covering essential details.
+- Captions sit in one consistent lane that clears the **source's own** lower third, the
+  client watermark and the graphic lane; three words per group with the operative word in
+  the brand colour reads better muted than a full sentence ever does.
 - Validate against the chosen platform's current visual guides/UI overlay. Do not assume one fixed safe-zone rectangle works across all devices and platforms.
 
 ### L3. Color and perceived lighting
@@ -712,6 +779,12 @@ At minimum:
 8. Verify music/B-roll/SFX provenance and unresolved use restrictions.
 9. Run applicable technical checks with media tools and record actual results.
 10. If motion/audio inspection is unavailable, mark those checks unperformed and do not claim final QA passed.
+11. Measured technical checks that must run and be reported with their numbers:
+    picture duration == timeline duration to the frame (a picture track longer than the
+    audio is heard as the clip dragging behind the voice); cut positions on the plan;
+    decode-error count from a full pass; EBU integrated loudness and true peak;
+    watermark present on the sampled frames (colour probe, not eyeballing); longest run
+    with no face on screen; any text overlapping a face; nearest-face crop audit result.
 
 Default delivery can be 1080×1920 H.264 MP4 with AAC audio, source-appropriate frame rate, and color handling suited to the brief. Do not silently create HDR/SDR conversion errors or claim a cropped low-resolution source has native high-resolution detail.
 

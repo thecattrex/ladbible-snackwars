@@ -104,7 +104,12 @@ def audit(src: Path, pieces, fps: float = 4.0):
             if (abs(fb[0] - fa[0]) > box["w"] * 0.35 or
                     (fa[2] > 0 and not 0.6 <= fb[2] / fa[2] <= 1.7)):
                 cut_at = tb if ta < (p["src_in"] + p["src_out"]) / 2 else ta
-                cut_at = max(p["src_in"] + 0.12, min(p["src_out"] - 0.12, cut_at))
+                # only split something long enough to hold two halves; clamping a
+                # 0.2 s piece produced a negative-length second half
+                if p["src_out"] - p["src_in"] < 0.6:
+                    cut_at = None
+                    break
+                cut_at = min(max(cut_at, p["src_in"] + 0.12), p["src_out"] - 0.12)
                 break
 
         halves = [(p["src_in"], p["src_out"])] if cut_at is None else \

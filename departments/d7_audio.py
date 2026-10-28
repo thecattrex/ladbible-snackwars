@@ -45,7 +45,7 @@ def main() -> int:
     brief = store.validate_brief(cid)
     at = brief.get("audio_targets", {})
     lufs, tp = at.get("lufs", -16), at.get("true_peak", -1)
-    music_db = at.get("music_gain_db", -22)
+    # no music bed: dialogue-led clips are mixed clean (docs/CRAFT.md)
 
     edl = store.read_json(cid, f"artifacts/edl_picture_{clip}.v1.json")["payload"]
     plan = store.read_json(cid, f"artifacts/cutplan_{clip}.v1.json")["payload"]
@@ -63,17 +63,18 @@ def main() -> int:
     graph, labels = [], []
     for i, e in enumerate(events):
         a, b = e["source_in"], e["source_out"]
-        graph.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=N/SR/TB[d{i}]")
+        graph.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=N/SR/TB,"
+                     f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[d{i}]")
         labels.append(f"[d{i}]")
         if i < len(events) - 1:
             gap = events[i + 1]["output_in"] - e["output_out"]
             if gap > 0.001:
-                graph.append(f"aevalsrc=0:d={gap:.3f}:s=44100:c=mono[g{i}]")
+                graph.append(f"aevalsrc=0:d={gap:.3f}:s=48000:c=stereo[g{i}]")
                 labels.append(f"[g{i}]")
     graph.append(f"{''.join(labels)}concat=n={len(labels)}:v=0:a=1[dia]")
     subprocess.run([FF, "-nostdin", "-v", "error", "-y", "-i", str(SRC),
                     "-filter_complex", ";".join(graph), "-map", "[dia]",
-                    "-ac", "1", "-ar", "44100", str(dialogue)], check=True)
+                    "-ac", "2", "-ar", "48000", str(dialogue)], check=True)
 
     wh = work.with_name("whoosh.wav"); sfx.whoosh(wh, 0.62)
     im_ = work.with_name("impact.wav"); sfx.impact(im_, 0.42)

@@ -201,12 +201,8 @@ def main() -> int:
     else:
         y0 = 1920 - int(wmc.get("margin_bottom", 300)) - wm_h
         band = (y0 / 1920, min(1.0, (y0 + wm_h) / 1920))
-    bands_art = store.read_json(cid, f"artifacts/bands_{clip}.v1.json") or {}
-    bp = bands_art.get("payload") or {}
-    if bp.get("top_h"):
-        area = (bp["top_h"] / 1920, (bp["top_h"] + bp["video_h"]) / 1920)
-    else:
-        area = (0.0, 1.0)
+    # full-bleed delivery: the picture is the whole frame, so the QA crop covers all of it
+    area = (0.0, 1.0)
     info, loud, vis, fid = probe(out), loudness(out), visual(out, band, area), fidelity(clip, cid)
     integ = integrity(out)
     at = brief.get("audio_targets", {})
