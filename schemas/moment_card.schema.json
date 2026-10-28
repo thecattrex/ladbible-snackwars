@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "moment_card",
+  "type": "object",
+  "required": ["candidate_id", "audience", "takeaway", "source", "quote", "setup", "payoff", "score", "confidence", "status"],
+  "properties": {
+    "candidate_id": {"type": "string"},
+    "audience": {"type": "string"},
+    "takeaway": {"type": "string"},
+    "source": {"type": "object", "required": ["asset", "intervals"], "properties": {"asset": {"type": "string"}, "intervals": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}}}},
+    "quote": {"type": "string", "description": "exact supported words, never paraphrased"},
+    "paraphrase": {"type": ["string", "null"]},
+    "evidence": {"type": "object", "description": "what was actually inspected: transcript / sampled frames / motion"},
+    "setup": {"type": "string"},
+    "turning_point": {"type": ["string", "null"]},
+    "payoff": {"type": "string"},
+    "context_needed": {"type": ["string", "null"]},
+    "uncertainty": {"type": ["string", "null"]},
+    "native_opening": {"type": ["string", "null"]},
+    "editorial_headline": {"type": ["string", "null"]},
+    "edit_complexity": {"type": ["string", "null"]},
+    "asset_needs": {"type": "array", "items": {"type": "string"}},
+    "overlap_with": {"type": "array", "items": {"type": "string"}},
+    "lens": {"type": "string"},
+    "score": {
+      "type": "object",
+      "required": ["audience_relevance", "opening_potential", "payoff_value", "standalone_clarity", "specificity", "audiovisual_material", "distinctness", "total"],
+      "properties": {
+        "audience_relevance": {"type": "number"}, "opening_potential": {"type": "number"},
+        "payoff_value": {"type": "number"}, "standalone_clarity": {"type": "number"},
+        "specificity": {"type": "number"}, "audiovisual_material": {"type": "number"},
+        "distinctness": {"type": "number"}, "total": {"type": "number"}
+      }
+    },
+    "confidence": {"enum": ["high", "medium", "low"]},
+    "hard_reject": {"type": ["string", "null"]},
+    "status": {"enum": ["CANDIDATE", "SELECTED", "BACKUP", "REJECTED"]}
+  }
+}

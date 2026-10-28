@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "campaign",
+  "type": "object",
+  "required": ["campaign_id", "mode", "source", "target_clips", "clip_length", "structure", "target_format"],
+  "properties": {
+    "campaign_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-_]{2,}$"},
+    "mode": {"enum": ["DESIGN_ONLY", "BUILD_WORKFLOW", "RUN_CAMPAIGN"]},
+    "source": {
+      "type": "object",
+      "required": ["type", "rights"],
+      "properties": {
+        "type": {"enum": ["LOCAL_FILE", "YOUTUBE_URL", "DIRECT_URL", "WETRANSFER"]},
+        "path_or_url": {"type": "string"},
+        "wetransfer": {"type": "object", "properties": {"transfer_id": {"type": "string"}, "security_hash": {"type": "string"}}},
+        "rights": {"enum": ["OWNED", "LICENSED", "OTHER_AUTHORIZED_BASIS"]}
+      }
+    },
+    "target_clips": {"type": "integer", "minimum": 1, "description": "always supplied by the user, never defaulted by the system"},
+    "clip_length": {
+      "type": "object",
+      "required": ["min", "max"],
+      "description": "per campaign, supplied by the user; the system never assumes a band",
+      "properties": {"min": {"type": "number"}, "max": {"type": "number"}}
+    },
+    "structure": {"enum": ["ADAPTIVE_HIERARCHY", "CORPORATE_40"]},
+    "target_format": {"type": "string", "default": "9:16"},
+    "audience": {"type": ["string", "null"]},
+    "niche": {"type": ["string", "null"]},
+    "spoken_language": {"type": ["string", "null"]},
+    "caption_language_and_script": {"type": ["string", "null"]},
+    "style": {"type": ["string", "null"]},
+    "narration": {"type": "boolean", "default": false},
+    "publish": {"type": "boolean", "default": false},
+    "budget": {"type": ["object", "null"]},
+    "deadline": {"type": ["string", "null"]},
+    "review_revisions": {"type": "integer", "default": 2},
+    "assets": {"type": "array", "items": {"type": "string"}},
+    "audio_targets": {"type": "object"},
+    "delivery": {"type": "object"}
+  }
+}

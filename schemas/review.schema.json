@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "review_finding",
+  "type": "object",
+  "required": ["artifact_id", "artifact_version", "verdict", "category", "severity", "observation", "corrective_action", "acceptance_test", "department_id", "revision"],
+  "properties": {
+    "artifact_id": {"type": "string"},
+    "artifact_version": {"type": "string"},
+    "verdict": {"enum": ["PASS", "REVISE", "REJECT", "BLOCKED"]},
+    "category": {"enum": ["source_fidelity", "context", "hook", "story", "pacing", "visual", "audio", "caption", "technical", "rights", "coverage", "distinctness"]},
+    "severity": {"enum": ["blocker", "major", "minor"]},
+    "source_timestamp": {"type": ["number", "null"]},
+    "output_timestamp": {"type": ["number", "null"]},
+    "observation": {"type": "string"},
+    "evidence": {"type": ["string", "null"]},
+    "corrective_action": {"type": "string"},
+    "acceptance_test": {"type": "string"},
+    "department_id": {"type": "string"},
+    "revision": {"type": "integer", "minimum": 0},
+    "reviewer": {"type": "string"}
+  }
+}

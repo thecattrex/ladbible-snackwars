@@ -1,0 +1,22 @@
+{
+  "campaign_id": "REPLACE-ME",
+  "mode": "DESIGN_ONLY",
+  "source": {"type": "DIRECT_URL", "path_or_url": "", "rights": "OWNED"},
+  "target_clips": 0,
+  "clip_length": {"min": 0, "max": 0},
+  "structure": "ADAPTIVE_HIERARCHY",
+  "target_format": "9:16",
+  "audience": null,
+  "niche": null,
+  "spoken_language": null,
+  "caption_language_and_script": null,
+  "style": null,
+  "narration": false,
+  "publish": false,
+  "budget": null,
+  "deadline": null,
+  "review_revisions": 2,
+  "assets": ["assets/watermark_white.png"],
+  "audio_targets": {"lufs": -15, "true_peak": -1.5, "music_gain_db": -22},
+  "delivery": {"format": "mp4", "resolution": "1080x1920", "fps": 30, "codec": "h264", "audio": "aac"}
+}

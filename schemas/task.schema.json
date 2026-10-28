@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "task",
+  "type": "object",
+  "required": ["campaign_id", "department_id", "task_id", "objective", "scope", "inputs", "outputs", "acceptance", "attempt", "max_attempts"],
+  "properties": {
+    "campaign_id": {"type": "string"},
+    "department_id": {"type": "string", "pattern": "^D[1-9]$"},
+    "task_id": {"type": "string"},
+    "parent_task_id": {"type": ["string", "null"]},
+    "objective": {"type": "string"},
+    "scope": {"type": "object", "description": "bounded source scope, e.g. {t0,t1} or {shard}"},
+    "inputs": {"type": "array", "items": {"type": "object"}},
+    "tools_permitted": {"type": "array", "items": {"type": "string"}},
+    "budget_remaining": {"type": ["number", "null"]},
+    "outputs": {"type": "object", "description": "expected artifact schema + refs"},
+    "acceptance": {"type": "array", "items": {"type": "string"}},
+    "attempt": {"type": "integer", "minimum": 1},
+    "max_attempts": {"type": "integer", "minimum": 1, "maximum": 3},
+    "dependencies": {"type": "array", "items": {"type": "string"}}
+  }
+}

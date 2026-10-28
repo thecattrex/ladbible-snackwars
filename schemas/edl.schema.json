@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "edit_decision_list",
+  "type": "object",
+  "required": ["campaign_id", "clip_id", "edit_version", "source_version", "timeline_convention", "events"],
+  "properties": {
+    "campaign_id": {"type": "string"},
+    "clip_id": {"type": "string"},
+    "edit_version": {"type": "string"},
+    "source_version": {"type": "string"},
+    "timeline_convention": {"type": "string", "description": "zero-based output seconds, end-exclusive, with explicit source time base"},
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event_id", "layer", "source_in", "source_out", "output_in", "output_out", "purpose"],
+        "properties": {
+          "event_id": {"type": "string"},
+          "layer": {"enum": ["picture", "audio", "caption", "graphic", "overlay", "sfx", "music"]},
+          "source_in": {"type": ["number", "null"]},
+          "source_out": {"type": ["number", "null"]},
+          "output_in": {"type": "number"},
+          "output_out": {"type": "number"},
+          "speed": {"type": "number"},
+          "crop": {"type": ["object", "null"]},
+          "asset": {"type": ["string", "null"]},
+          "provenance": {"type": ["string", "null"]},
+          "transition": {"type": ["string", "null"]},
+          "purpose": {"type": "string"}
+        }
+      }
+    }
+  }
+}

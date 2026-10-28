@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "hook_card",
+  "type": "object",
+  "required": ["hook_id", "candidate_id", "viewer_question", "payoff", "category", "pattern", "first_frame", "first_sentence", "sound_plan", "drafts", "shortlist", "winner", "rubric", "review_status"],
+  "properties": {
+    "hook_id": {"type": "string"},
+    "candidate_id": {"type": "string"},
+    "viewer_question": {"type": "string"},
+    "payoff": {"type": "string"},
+    "payoff_source_intervals": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+    "category": {"enum": ["NATIVE", "EDITORIAL_TEXT", "NEW_NARRATION"]},
+    "pattern": {"type": "string"},
+    "native_quote": {"type": ["string", "null"]},
+    "native_quote_source": {"type": ["object", "null"]},
+    "editorial_text": {"type": ["string", "null"]},
+    "first_frame": {"type": "string"},
+    "first_sentence": {"type": "string"},
+    "sound_plan": {"type": "string"},
+    "drafts": {"type": "array", "items": {"type": "string"}},
+    "shortlist": {"type": "array", "items": {"type": "string"}},
+    "winner": {"type": "string"},
+    "rubric": {
+      "type": "object",
+      "required": ["comprehensibility", "relevance_stakes", "curiosity", "specificity", "source_fidelity", "payoff_alignment", "total"],
+      "properties": {"comprehensibility": {"type": "number"}, "relevance_stakes": {"type": "number"}, "curiosity": {"type": "number"}, "specificity": {"type": "number"}, "source_fidelity": {"type": "number"}, "payoff_alignment": {"type": "number"}, "total": {"type": "number"}}
+    },
+    "story_beats": {"type": "array", "items": {"type": "object"}},
+    "alternate": {"type": ["object", "null"]},
+    "review_status": {"enum": ["PENDING", "PASS", "REVISE", "REJECT"]}
+  }
+}
