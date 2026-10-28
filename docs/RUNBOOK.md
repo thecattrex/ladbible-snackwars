@@ -30,3 +30,20 @@ length band is missing.
 ## 5. Outputs
 `state/<id>/clips/*.mp4`, `delivery.csv`, `manifest.json`, `boss_report.json`,
 `reviews.jsonl`, `gates.json`, `cost_ledger.jsonl`.
+
+## 6. Campaign lifecycle (enforced)
+
+```bash
+# open a campaign (only one can be open at a time)
+python3 orchestrator/boss.py campaign-a          # sets state/ACTIVE_CAMPAIGN
+
+# switching to another campaign is refused while one is open:
+#   isolation: 'campaign-a' is active, refusing to work on 'campaign-b'
+
+# when the user says it is finished and perfect:
+python3 orchestrator/purge.py campaign-a --confirmed-perfect
+```
+
+Purge deletes the brief, state, transcripts, renders, clips and stills for that
+campaign, and keeps `lessons/campaign-a.md` + the system. The lesson file is
+created before anything is removed.

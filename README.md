@@ -10,6 +10,7 @@ the prompt disagree, the prompt wins.
 | `docs/ARCHITECTURE.md` | prompt section → file, with honest build status |
 | `docs/CAPABILITIES.md` | per-operation truth: SUPPORTED / PARTIAL / UNAVAILABLE / NOT_RUN |
 | `docs/RUNBOOK.md` | how to start a campaign |
+| `docs/RULES.md` | standing rules: one campaign at a time, purge only on your word |
 | `campaigns/<id>/campaign.json` | the brief — clip count and length come from the user, always |
 | `schemas/` | campaign, task, review, moment card, hook card, EDL |
 | `departments/d1..d9` | the nine production departments |

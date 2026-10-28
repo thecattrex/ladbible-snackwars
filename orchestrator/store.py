@@ -31,7 +31,12 @@ def brief(campaign_id: str) -> dict:
 
 def validate_brief(campaign_id: str) -> dict:
     """The brief must name the clip count and the length band itself. The system
-    never invents either: they change per campaign."""
+    never invents either: they change per campaign.
+
+    Also enforces campaign isolation: only one campaign can be open at a time.
+    """
+    from orchestrator import isolation
+    isolation.require(campaign_id)
     b = brief(campaign_id)
     missing = [k for k in ("campaign_id", "mode", "source", "target_clips",
                            "clip_length", "structure", "target_format") if k not in b]
