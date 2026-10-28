@@ -184,14 +184,14 @@ def main() -> int:
         out = []
         for x in sh["shots"]:
             a, b = max(x["t0"], t0), min(x["t1"], t1)
-            if b - a < 0.30:
+            if b - a < 0.22:
                 continue
             if not x["speaker"]:
                 out.append([round(a, 2), round(b, 2)])
                 continue
             box = framing.crop_for(x, 3840, 2160,
                                    target_face_frac=float(edit.get("target_face_frac", 0.30)))
-            probes = [a + (b - a) * k for k in (0.25, 0.55, 0.85)]
+            probes = [a + (b - a) * k for k in (0.2, 0.45, 0.7, 0.9)]
             if not any(cropaudit.face_in_crop(SRC, t, box, offset=OFF) for t in probes):
                 out.append([round(a, 2), round(b, 2)])
         return out

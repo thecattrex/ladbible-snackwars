@@ -160,7 +160,8 @@ def audit(src: Path, pieces, fps: float = 4.0, offset: float = 0.0):
                     clusters.append(f)
             for f in sorted(clusters, key=lambda f: abs(f[0] - (box["x"] + box["w"] / 2))):
                 cands.append(_shift(box, f))
-            probes = [h0 + (h1 - h0) * k for k in (0.3, 0.7)] if h1 > h0 else [h0]
+            probes = ([h0 + (h1 - h0) * k for k in (0.15, 0.4, 0.65, 0.9)]
+                      if h1 > h0 else [h0])
             chosen = None
             for cand in cands:
                 hits = sum(1 for t in probes if face_in_crop(src, t, cand, offset=offset))
