@@ -14,7 +14,7 @@ same text, so only the background decision changes:
 """
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from mock_reframe import (ASSETS, H, INK, LIME, W, BANNER, banner_text, centred,
                           font, stream_frame)
@@ -79,6 +79,43 @@ def caption_plate(d, y: int, h: int) -> None:
     centred(d, (W / 2, y + 108 * k), "lol", font("ArchivoBlack-Regular.ttf", int(62 * k)), LIME)
 
 
+def blur_banner(strength: int = 46) -> Image.Image:
+    """Banner artwork, blown up and blurred into a soft brand-coloured backdrop."""
+    art = Image.open(BANNER).convert("RGB")
+    scale = max(W / art.size[0], H / art.size[1]) * 1.15
+    big = art.resize((int(art.size[0] * scale), int(art.size[1] * scale)), Image.LANCZOS)
+    left = (big.size[0] - W) // 2
+    top = (big.size[1] - H) // 2
+    out = big.crop((left, top, left + W, top + H)).filter(ImageFilter.GaussianBlur(strength))
+    out = Image.eval(out, lambda v: int(v * 0.86))
+    veil = Image.new("RGB", (W, H), (14, 6, 20))
+    return Image.blend(out, veil, 0.22)
+
+
+def blur_clip(strength: int = 42) -> Image.Image:
+    """The clip itself, blown up and blurred — the familiar Reels backdrop."""
+    src = stream_frame()
+    scale = max(W / src.size[0], H / src.size[1]) * 1.2
+    big = src.resize((int(src.size[0] * scale), int(src.size[1] * scale)), Image.LANCZOS)
+    left = (big.size[0] - W) // 2
+    top = (big.size[1] - H) // 2
+    out = big.crop((left, top, left + W, top + H)).filter(ImageFilter.GaussianBlur(strength))
+    out = Image.eval(out, lambda v: int(v * 0.78))
+    veil = Image.new("RGB", (W, H), (10, 10, 14))
+    return Image.blend(out, veil, 0.30)
+
+
+def blur_banner_band() -> Image.Image:
+    """Blurred banner everywhere, plus one crisp band of it at the top."""
+    img = blur_banner()
+    art = Image.open(BANNER).convert("RGB")
+    band_h = int(W * art.size[1] / art.size[0])
+    img.paste(art.resize((W, band_h), Image.LANCZOS), (0, 0))
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, band_h - 3, W, band_h + 3], fill=(230, 30, 120))
+    return img
+
+
 def compose(bg: Image.Image, hook_geom, caption_geom) -> Image.Image:
     """The 16:9 clip full width + the three text plates, on the given background."""
     img = bg.copy()
@@ -124,7 +161,23 @@ def main() -> None:
         t = im.resize((W // 2, (H + 80) // 2), Image.LANCZOS)
         sheet.paste(t, (i * W // 2, 10))
     sheet.save(OUT / "bg_compare.jpg", quality=90)
+
+    # the blur family
+    b1 = label(compose(blur_banner(), (150, 370), (1325, 165)), "B1  BLURRED BANNER")
+    b2 = label(compose(blur_clip(), (150, 370), (1325, 165)), "B2  BLURRED CLIP")
+    b3 = label(compose(blur_banner_band(), (452, 232), (1325, 165)),
+               "B3  BLUR + CRISP BAND")
+    b1.save(OUT / "bg_b1_blurred_banner.jpg", quality=92)
+    b2.save(OUT / "bg_b2_blurred_clip.jpg", quality=92)
+    b3.save(OUT / "bg_b3_blur_band.jpg", quality=92)
+
+    bsheet = Image.new("RGB", (3 * W // 2, (H + 80) // 2 + 20), INK)
+    for i, im in enumerate((b1, b2, b3)):
+        t = im.resize((W // 2, (H + 80) // 2), Image.LANCZOS)
+        bsheet.paste(t, (i * W // 2, 10))
+    bsheet.save(OUT / "bg_blur_compare.jpg", quality=90)
     print("wrote bg_1_cover.jpg bg_2_band_top.jpg bg_3_band_bottom.jpg bg_compare.jpg")
+    print("wrote bg_b1_blurred_banner.jpg bg_b2_blurred_clip.jpg bg_b3_blur_band.jpg bg_blur_compare.jpg")
 
 
 if __name__ == "__main__":
