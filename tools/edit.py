@@ -225,8 +225,10 @@ def move_filter(move: str, dur: float) -> str:
 
 
 def build(video: Path, plan: dict, out: Path) -> None:
+    """CONTINUOUS plans have a single shot — the moment is kept whole on purpose."""
     tmp = Path(tempfile.mkdtemp())
     shots = plan["shots"]
+    continuous = len(shots) == 1
     total = sum(s["len"] for s in shots)
 
     # cut points snapped to onsets in the source audio
@@ -261,7 +263,7 @@ def build(video: Path, plan: dict, out: Path) -> None:
 
     # sfx: none unless the plan asks for a click on the cuts. No swells, no
     # whooshes — the user does not want to hear an effect at the edit point.
-    mode = plan.get("sfx", "none")
+    mode = plan.get("sfx", "none") if not continuous else "none"
     sfx_dir = tmp / "sfx"; sfx_dir.mkdir()
     sfx_inputs, sfx_graph = [], []
     base = len(shots)
