@@ -32,9 +32,16 @@ FF = imageio_ffmpeg.get_ffmpeg_exe()
 MODEL = Path(__file__).resolve().parent.parent / "assets" / "face_detection_yunet.onnx"
 
 
-def proxy(src: Path, t0: float, t1: float, fps: float = 4.0, w: int = 960):
+def proxy(src: Path, t0: float, t1: float, fps: float = 4.0, w: int = 960, offset: float = 0.0):
+    """Decode a proxy of [t0, t1] in *source* time.
+
+    `offset` is the source timestamp of the file's first frame: when the media is
+    a cut of the episode rather than the whole episode, seek positions have to be
+    shifted by it and every reported time stays in absolute source time.
+    """
     h = w * 9 // 16
-    raw = subprocess.run([FF, "-v", "error", "-ss", f"{t0:.3f}", "-t", f"{t1 - t0:.3f}",
+    raw = subprocess.run([FF, "-v", "error", "-ss", f"{max(0.0, t0 - offset):.3f}",
+                          "-t", f"{t1 - t0:.3f}",
                           "-i", str(src), "-vf", f"fps={fps},scale={w}:{h}",
                           "-pix_fmt", "bgr24", "-f", "rawvideo", "-"],
                          capture_output=True).stdout
@@ -77,8 +84,8 @@ def mouth_motion(prev, cur, face) -> float:
     return float(np.abs(b - a).mean())
 
 
-def analyse(src: Path, t0: float, t1: float, fps: float = 4.0) -> dict:
-    frames, fps, w, h = proxy(src, t0, t1, fps)
+def analyse(src: Path, t0: float, t1: float, fps: float = 4.0, offset: float = 0.0) -> dict:
+    frames, fps, w, h = proxy(src, t0, t1, fps, offset=offset)
     d = detector(w, h)
     per_frame = []
     prev = None

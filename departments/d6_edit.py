@@ -28,6 +28,9 @@ import os
 from pathlib import Path
 MEDIA = Path(os.environ.get("MEDIA_ROOT", "/var/tmp"))
 SRC = MEDIA / "src.mp4"
+# the media may be a cut of the episode: SRC_OFFSET says which source second its
+# first frame is, so every seek can still be written in absolute episode time
+OFF = float(os.environ.get("SRC_OFFSET", "0") or 0)
 W, H = 1080, 1920   # full-bleed vertical: the client rejected the letterbox bands
 cv2.setNumThreads(2)
 
@@ -42,7 +45,7 @@ def crop_box(fr: dict, punch: bool = False):
 
 def frames_at(t: float, w: int = 800):
     h = w * 9 // 16 // 2 * 2
-    raw = subprocess.run([FF, "-v", "error", "-ss", f"{max(0, t):.2f}", "-i", str(SRC),
+    raw = subprocess.run([FF, "-v", "error", "-ss", f"{max(0.0, t - OFF):.2f}", "-i", str(SRC),
                           "-frames:v", "1", "-vf", f"scale={w}:{h}", "-pix_fmt", "gray",
                           "-f", "rawvideo", "-"], capture_output=True).stdout
     if len(raw) < w * h:
@@ -150,7 +153,7 @@ def main() -> int:
                          f"— widen the moment, not the rule")
 
     # --- picture: one crop per camera shot, never one crop for the whole clip
-    shots = framing.analyse(SRC, t0, t1, float(edit.get("face_fps", 4.0)))
+    shots = framing.analyse(SRC, t0, t1, float(edit.get("face_fps", 4.0)), offset=OFF)
     store.artifact(cid, f"framing_{cid_clip}", shots)
     if shots["face_coverage"] < float(edit.get("min_face_coverage", 0.97)):
         raise SystemExit(f"only {shots['face_coverage']:.0%} of the window has a face on "
@@ -165,16 +168,30 @@ def main() -> int:
                   if sh["t1"] > seg["src_in"] + 0.02 and sh["t0"] < seg["src_out"] - 0.02]
         if not inside:
             raise SystemExit(f"segment {seg['index']} has no framed shot")
+        seg_pieces = []
         for sh in inside:
             a0 = max(seg["src_in"], sh["t0"])
             a1 = min(seg["src_out"], sh["t1"])
-            if pieces and a1 - a0 < 0.20:
+            if a1 - a0 < 0.20:
                 # too short to read as its own shot: absorb it rather than drop it
                 # (dropping shortened the picture against the audio)
-                pieces[-1]["src_out"] = round(max(pieces[-1]["src_out"], a1), 3)
+                if seg_pieces:
+                    seg_pieces[-1]["src_out"] = a1
                 continue
-            pieces.append({"src_in": round(a0, 3), "src_out": round(a1, 3),
-                           "shot": sh, "segment": seg["index"]})
+            seg_pieces.append({"src_in": a0, "src_out": a1,
+                               "shot": sh, "segment": seg["index"]})
+        if not seg_pieces:                      # one shot covers the whole segment
+            seg_pieces = [{"src_in": seg["src_in"], "src_out": seg["src_out"],
+                           "shot": inside[0], "segment": seg["index"]}]
+        # the pieces of a segment must tile it exactly: the shot track is a
+        # summary with rounded bounds, so overlaps and hairline gaps are closed
+        # here rather than left to show up as a layer mismatch at render time
+        seg_pieces[0]["src_in"] = seg["src_in"]
+        seg_pieces[-1]["src_out"] = seg["src_out"]
+        for k in range(1, len(seg_pieces)):
+            seg_pieces[k]["src_in"] = seg_pieces[k - 1]["src_out"]
+        pieces += [{"src_in": round(q["src_in"], 3), "src_out": round(q["src_out"], 3),
+                    "shot": q["shot"], "segment": q["segment"]} for q in seg_pieces]
 
     # beat structure: a long take gets a punch-in halfway so the frame changes
     # size every few seconds instead of sitting still for the whole sentence
@@ -253,7 +270,7 @@ def main() -> int:
     # ---- crop audit: the framing track is a summary, the picture is the truth.
     # If the source cut to a new setup between two track samples the planned crop
     # can sit on an empty desk, so every box is checked against real frames.
-    pieces, audit = cropaudit.audit(SRC, pieces, float(edit.get("audit_fps", 4.0)))
+    pieces, audit = cropaudit.audit(SRC, pieces, float(edit.get("audit_fps", 4.0)), offset=OFF)
     store.artifact(cid, f"cropaudit_{cid_clip}", audit)
     if audit["moved"] or audit["split"] or audit["no_face"]:
         print(json.dumps({"crop_audit": audit}, indent=1), file=sys.stderr)
@@ -297,7 +314,9 @@ def main() -> int:
                              f"not a rounding error")
         pieces[-1]["src_out"] = round(pieces[-1]["src_out"] + (want - total), 4)
     total = round(sum(p["src_out"] - p["src_in"] for p in pieces), 4)
-    assert abs(total - want) < 1e-6, f"picture {total} != audio {want}"
+    # the sum is exact by construction; what is left is float noise from adding
+    # grid-snapped durations, so the tolerance is a millisecond, not a frame
+    assert abs(total - want) < 1e-3, f"picture {total} != audio {want}"
 
     out_t = 0.0
     for p in pieces:                       # rebuilding can change the piece count
@@ -377,7 +396,7 @@ def main() -> int:
                   f"color=c=0xB4E600:s=5x{H}:d=1[lime];"
                   f"[l][lime][r]hstack=inputs=3,setsar=1[v]")
             subprocess.run([FF, "-nostdin", "-v", "error", "-y",
-                            "-ss", f"{p['src_in']:.6f}", "-t", f"{dur_i + .5:.6f}",
+                            "-ss", f"{max(0.0, p['src_in'] - OFF):.6f}", "-t", f"{dur_i + .5:.6f}",
                             "-i", str(SRC), "-filter_complex", fc, "-map", "[v]", "-an",
                             "-frames:v", str(nf), "-r", str(grid),
                             "-c:v", "libx264", "-preset", "veryfast", "-crf", "14",
@@ -385,7 +404,7 @@ def main() -> int:
         else:
             vf = f"{crop_expr(p)},scale={W}:{H}:flags=lanczos,setsar=1"
             subprocess.run([FF, "-nostdin", "-v", "error", "-y",
-                            "-ss", f"{p['src_in']:.6f}", "-t", f"{dur_i + .5:.6f}",
+                            "-ss", f"{max(0.0, p['src_in'] - OFF):.6f}", "-t", f"{dur_i + .5:.6f}",
                             "-i", str(SRC), "-vf", vf, "-an",
                             "-frames:v", str(nf), "-r", str(grid),
                             "-c:v", "libx264", "-preset", "veryfast", "-crf", "14",

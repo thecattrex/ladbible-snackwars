@@ -30,11 +30,11 @@ def _detector():
     return cv2.FaceDetectorYN.create(str(_MODEL), "", PROXY, 0.6, 0.3, 5000)
 
 
-def sample_faces(src: Path, t0: float, t1: float, fps: float = 4.0):
+def sample_faces(src: Path, t0: float, t1: float, fps: float = 4.0, offset: float = 0.0):
     """[(t, [(cx, cy, w, h) …])] in source pixels, for one piece."""
     w, h = PROXY
     dur = max(0.2, t1 - t0)
-    raw = subprocess.run([FF, "-v", "error", "-ss", f"{max(0.0, t0):.3f}", "-t", f"{dur:.3f}",
+    raw = subprocess.run([FF, "-v", "error", "-ss", f"{max(0.0, t0 - offset):.3f}", "-t", f"{dur:.3f}",
                           "-i", str(src), "-an", "-vf", f"fps={fps},scale={w}:{h}",
                           "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
                          capture_output=True).stdout
@@ -71,11 +71,11 @@ def _inside(box: dict, face, margin: float = 0.06) -> bool:
             box["y"] + my <= face[1] <= box["y"] + box["h"] - my)
 
 
-def audit(src: Path, pieces, fps: float = 4.0):
+def audit(src: Path, pieces, fps: float = 4.0, offset: float = 0.0):
     """Fix every piece in place. Returns (pieces, report)."""
     fixed, report = [], {"checked": 0, "moved": 0, "split": 0, "no_face": 0, "notes": []}
     for p in pieces:
-        samples = sample_faces(src, p["src_in"], p["src_out"], fps)
+        samples = sample_faces(src, p["src_in"], p["src_out"], fps, offset=offset)
         report["checked"] += 1
         box = dict(p["crop"])
 
@@ -90,7 +90,8 @@ def audit(src: Path, pieces, fps: float = 4.0):
         have = [t for t, f in targets if f]
         if not have:
             report["no_face"] += 1
-            report["notes"].append(f"{p['src_in']:.2f}: no face at all — left as planned")
+            report["notes"].append(f"{p['src_in']:.2f}: no face at all")
+            p = dict(p); p["audit"] = "no_face"     # resolved in the pass below
             fixed.append(p)
             continue
 
@@ -141,4 +142,19 @@ def audit(src: Path, pieces, fps: float = 4.0):
                 part.pop("box_to", None)
                 part.pop("move", None)
             fixed.append(part)
+    # A stretch where the detector sees nothing must not be framed by the guess
+    # that produced it: hold the nearest framed box so the camera stays on the
+    # person who was just talking instead of drifting to the empty chair.
+    known = [(i, q) for i, q in enumerate(fixed)
+             if q.get("audit") in ("moved", "kept") and q.get("crop")]
+    for i, q in enumerate(fixed):
+        if q.get("audit") != "no_face" or not known:
+            continue
+        near = min(known, key=lambda kq: min(abs(kq[1]["src_in"] - q["src_out"]),
+                                             abs(q["src_in"] - kq[1]["src_out"])))
+        q["crop"] = dict(near[1]["crop"])
+        q["audit"] = "inherited"
+        report["notes"].append(f"{q['src_in']:.2f}: held the last framed box "
+                               f"(from {near[1]['src_in']:.2f})")
+
     return fixed, report

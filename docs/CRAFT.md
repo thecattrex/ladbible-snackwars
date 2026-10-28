@@ -14,6 +14,10 @@ Every rule below was confirmed on a rendered clip and measured in D9. The master
   to the picture by construction.
 - QA gate: picture duration == timeline duration to the frame, cut positions within one
   frame of the plan, and a correlation check of the clip audio against the mix (target 0 ms).
+- A clip's media may be a cut of the master (only the seconds the clip needs are pulled
+  from the 75-minute source); `SRC_OFFSET` tells every seek which source second frame 0 is,
+  so the EDL, the face track and the audio stay in absolute episode time and nothing
+  downstream knows the media was cut.
 
 ## 2. Camera — follow the speaker, keep the frame alive
 - One crop per shot, placed on the person who is speaking.
@@ -44,6 +48,15 @@ Every rule below was confirmed on a rendered clip and measured in D9. The master
 - Cards sit in a lane that clears the face, the caption lane and the source's own lower
   third. Gaps between cards; never one card after another on a metronome.
 - Light grain and the same grade on picture and cards, so graphics sit inside the footage.
+- **Cards come from this clip's own words.** A number is read across tokens because the
+  transcript splits "$30,000" into `$30` + `,000` and "4 million" into two words; one card
+  per distinct figure; the kicker is the unit actually spoken ("in a week" -> `PER WEEK`)
+  or the topic actually named ("internal usage of models" -> `THE USAGE`). Repeating one
+  figure three times, or printing the same card on every clip in a campaign, is the
+  machine-made look the client rejected in v5/v6.
+- A question card needs a real question (interrogative opening or `?` in the clip's first
+  half); a statement card needs a clean line, never an ASR fragment ("what we What we
+  learned"). If the clip has nothing that earns a card, it gets fewer cards — not filler.
 
 ## 4. Captions and colour
 - Three-word groups, heavy grotesque (Archivo Black), keyword in the brand colour with a

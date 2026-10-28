@@ -153,10 +153,37 @@ def fidelity(clip: str, cid: str) -> dict:
     words = store.read_json(cid, "artifacts/transcript.v1.json")["payload"]["words"]
     said = " ".join(w["w"] for w in words if card["t0"] - .3 <= w["t"] < card["t1"]).lower()
     native = (hook.get("native_quote") or "").lower()
-    numbers_in_hook = re.findall(r"\d+", hook["winner"])
+    # a hook number has to be a number he actually said. Matching digits against
+    # the transcript is not enough: he says "three months", the hook says "3", and
+    # "1M" is spoken as "1 million" — compare values, not spellings.
+    from orchestrator import graphics as gfx
+    WORDS = {w: i for i, w in enumerate(
+        "zero one two three four five six seven eight nine ten eleven twelve thirteen "
+        "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
+    WORDS.update({"thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+                  "eighty": 80, "ninety": 90, "hundred": 100})
+
+    def values_of(text: str):
+        low = text.lower()
+        out = []
+        for raw in re.findall(r"[$\d][\d,\.]*\s*(?:k|m|b|million|billion|thousand|%)?", low):
+            v = gfx._num_value(raw)
+            if v:
+                out.append(v)
+        for word in re.findall(r"\b[a-z]+\b", low):     # "three months" is a number too
+            if word in WORDS:
+                out.append(float(WORDS[word]))
+        return out
+    spoken = [n["value"] for n in gfx.spoken_numbers(
+        [w for w in words if card["t0"] - .3 <= w["t"] < card["t1"]], 1e9)]
+    heard = values_of(said)
+    hook_vals = values_of(hook["winner"])
+    def supported(v):
+        pool = spoken + heard
+        return any(abs(v - q) <= max(1.0, 0.02 * q) for q in pool)
     return {"opening_spoken_in_clip": bool(native and native.split()[:4] and
                                            " ".join(native.split()[:4]) in said),
-            "hook_numbers_supported": all(n in said for n in numbers_in_hook),
+            "hook_numbers_supported": all(supported(v) for v in hook_vals),
             "payoff_present": bool(hook["payoff"] and hook["payoff"].split()[:3] and
                                    " ".join(hook["payoff"].split()[:3]).lower() in said)}
 

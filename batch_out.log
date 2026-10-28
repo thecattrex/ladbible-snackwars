@@ -1,0 +1,78 @@
+[c1804] d6 failed: picture 35.59s != audio 35.16s — refusing to render a clip whose layers disagree
+
+[c1804] ERROR  d6:21s
+[c155] UNPARSED  d6:114s d7:4s d8:71s d9:13s
+[c1955] d9 failed: poken_in_clip": true,
+  "hook_numbers_supported": true,
+  "payoff_present": true
+ },
+ "integrity": {
+  "decode_errors": 0,
+  "first_error": null,
+  "duration": 32.5,
+  "video_fps": 30.0
+ },
+ "hook_box": {},
+ "face_box_hook_window": {
+  "top": 0.2677,
+  "bottom": 0.4231
+ },
+ "text_over_face": null
+}
+
+[c1955] ERROR  d6:126s d7:6s d8:55s d9:11s
+[c1982] d6 failed: 66, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/user/clipper/departments/d6_edit.py", line 317, in main
+    assert abs(total - want) < 1e-6, f"picture {total} != audio {want}"
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: picture 38.2084 != audio 38.2083
+
+[c1982] ERROR  d6:43s
+[c320] UNPARSED  d6:119s d7:4s d8:82s d9:15s
+[c395] UNPARSED  d6:143s d7:5s d8:72s d9:16s
+[c424] UNPARSED  d6:120s d7:4s d8:61s d9:14s
+[c2114] d9 failed: ken_in_clip": true,
+  "hook_numbers_supported": false,
+  "payoff_present": true
+ },
+ "integrity": {
+  "decode_errors": 0,
+  "first_error": null,
+  "duration": 31.27,
+  "video_fps": 30.0
+ },
+ "hook_box": {},
+ "face_box_hook_window": {
+  "top": 0.2571,
+  "bottom": 0.4129
+ },
+ "text_over_face": null
+}
+
+[c2114] ERROR  d6:93s d7:3s d8:77s d9:11s
+[c557] UNPARSED  d6:98s d7:4s d8:92s d9:12s
+[c1407] UNPARSED  d6:141s d7:5s d8:98s d9:16s
+[c622] d9 failed: poken_in_clip": true,
+  "hook_numbers_supported": false,
+  "payoff_present": true
+ },
+ "integrity": {
+  "decode_errors": 0,
+  "first_error": null,
+  "duration": 44.9,
+  "video_fps": 30.0
+ },
+ "hook_box": {},
+ "face_box_hook_window": {
+  "top": 0.295,
+  "bottom": 0.4488
+ },
+ "text_over_face": null
+}
+
+[c622] ERROR  d6:127s d7:5s d8:82s d9:16s
+[c652] UNPARSED  d6:89s d7:3s d8:68s d9:11s
+[c2357] UNPARSED  d6:96s d7:4s d8:66s d9:11s
+[c1549] UNPARSED  d6:88s d7:3s d8:63s d9:11s

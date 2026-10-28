@@ -30,6 +30,7 @@ import os
 from pathlib import Path
 MEDIA = Path(os.environ.get("MEDIA_ROOT", "/var/tmp"))
 SRC = MEDIA / "src.mp4"
+OFF = float(os.environ.get("SRC_OFFSET", "0") or 0)   # first frame of SRC, in source time
 
 
 def main_audio_helpers():
@@ -62,7 +63,7 @@ def main() -> int:
     # picture, so a cut can never land mid-word on one layer only
     graph, labels = [], []
     for i, e in enumerate(events):
-        a, b = e["source_in"], e["source_out"]
+        a, b = max(0.0, e["source_in"] - OFF), max(0.0, e["source_out"] - OFF)
         graph.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=N/SR/TB,"
                      f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[d{i}]")
         labels.append(f"[d{i}]")
