@@ -23,7 +23,7 @@ import imageio_ffmpeg
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from orchestrator import store  # noqa: E402
+from orchestrator import store, sfx  # noqa: E402
 
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 import os
@@ -32,37 +32,8 @@ MEDIA = Path(os.environ.get("MEDIA_ROOT", "/var/tmp"))
 SRC = MEDIA / "src.mp4"
 
 
-def make_sfx(dest: Path, kind: str, sr: int = 44100):
-    rng = np.random.default_rng(7)
-    if kind == "whoosh":
-        n = int(.28 * sr); t = np.linspace(0, 1, n)
-        a = rng.normal(0, 1, n) * np.sin(np.pi * t) ** 2
-        a = np.convolve(a, np.ones(24) / 24, mode="same") * .5
-    elif kind == "thump":
-        n = int(.35 * sr); t = np.linspace(0, .35, n)
-        a = (np.sin(2 * np.pi * 68 * t) * np.exp(-9 * t)
-             + .4 * np.sin(2 * np.pi * 132 * t) * np.exp(-14 * t)) * .8
-    else:                                   # riser
-        n = int(.9 * sr); t = np.linspace(0, .9, n)
-        a = np.sin(2 * np.pi * (180 + 420 * t / .9) * t) * (t / .9) ** 2 * .28
-    a = np.clip(a, -1, 1)
-    with wave.open(str(dest), "wb") as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
-        w.writeframes((a * 32767).astype(np.int16).tobytes())
-
-
-def music_bed(dest: Path, seconds: float, sr: int = 22050):
-    n = int((seconds + 2) * sr)
-    t = np.linspace(0, n / sr, n)
-    a = (np.sin(2 * np.pi * 110 * t) * .5 + np.sin(2 * np.pi * 164.81 * t) * .3
-         + np.sin(2 * np.pi * 220.6 * t) * .12)
-    a *= .55 + .45 * np.sin(2 * np.pi * .08 * t)
-    a = a + np.random.default_rng(3).normal(0, 1, n) * .05
-    a = np.convolve(a, np.ones(400) / 400, mode="same")
-    a = a / (np.abs(a).max() + 1e-9) * .6
-    with wave.open(str(dest), "wb") as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
-        w.writeframes((a * 32767).astype(np.int16).tobytes())
+def main_audio_helpers():
+    pass
 
 
 def main() -> int:
@@ -104,54 +75,83 @@ def main() -> int:
                     "-filter_complex", ";".join(graph), "-map", "[dia]",
                     "-ac", "1", "-ar", "44100", str(dialogue)], check=True)
 
-    bed = work.with_name(f"{clip}_bed.wav"); music_bed(bed, dur)
-    whoosh = work.with_name("whoosh.wav"); make_sfx(whoosh, "whoosh")
-    thump = work.with_name("thump.wav"); make_sfx(thump, "thump")
-    riser = work.with_name("riser.wav"); make_sfx(riser, "riser")
+    bed_path = work.with_name(f"{clip}_bed.wav"); sfx.bed(bed_path, dur, bpm=at.get("bed_bpm", 82))
+    wh = work.with_name("whoosh.wav"); sfx.whoosh(wh, 0.62)
+    im_ = work.with_name("impact.wav"); sfx.impact(im_, 0.42)
+    rs = work.with_name("riser.wav"); sfx.riser(rs, 1.4)
+    sub = work.with_name("impact_sub.wav"); sfx.impact(sub, 0.55, pitch=48.0)
 
-    cues = [{"cue": "music_bed", "asset": "generated pad", "provenance": "synthesised in D7",
-             "gain_db": music_db, "at": 0.0, "purpose": "fill room tone under speech; ducked"}]
-    cut_points = [e["output_out"] for e in edl["events"][:-1]]
-    if len(cut_points) > 14:                      # keep the mix clean on fast cuts
-        cut_points = cut_points[:14]
-    for i, ct in enumerate(cut_points):
-        cues.append({"cue": f"whoosh_{i}", "asset": "generated whoosh", "provenance": "synthesised in D7",
-                     "gain_db": at.get("whoosh_gain_db", -14), "at": round(ct, 2),
-                     "purpose": "mark a camera cut"})
-    import re
-    for j, e in enumerate(events):
-        if e.get("purpose", "").startswith("punch-in") and j > 0:
-            cues.append({"cue": f"thump_{j}", "asset": "generated low impact",
-                         "provenance": "synthesised in D7",
-                         "gain_db": at.get("thump_gain_db", -12),
-                         "at": round(e["output_in"] + 0.10, 2),
-                         "purpose": "land the number being said"})
-    cues.append({"cue": "riser", "asset": "generated riser", "provenance": "synthesised in D7",
-                 "gain_db": -18, "at": 0.0, "purpose": "carry the hook card only"})
+    cues = [{"cue": "bed", "asset": "synthesised dark bed", "provenance": "generated in D7",
+             "gain_db": music_db, "at": 0.0,
+             "purpose": "low bed under speech; ducked by the sidechain"}]
 
-    inputs = ["-i", str(dialogue), "-i", str(bed)]
-    # two stage gain: the dialogue is normalised with headroom so the bed and SFX
-    # can sit on top without ever pushing the mix over full scale; the finished
-    # mix is then normalised to the campaign target with a true-peak ceiling.
-    filters = [f"[0:a]loudnorm=I={lufs - 5}:TP={tp - 5}:LRA=11[main]",
-               f"[1:a]atrim=0:{dur},asetpts=N/SR/TB,aresample=48000[bed]"]
-    mix = ["[main]", "[bed]"]
+    # --- transitions that carry a card get a whoosh straddling the cut, and the
+    # card itself gets an impact exactly as it lands
+    gfx = store.read_json(cid, f"graphics_{clip}.v1.json") or {"payload": {"cards": []}}
+    cards = gfx["payload"]["cards"]
+    pic_cuts = [e["output_out"] for e in edl["events"][:-1]]
+    for i, c in enumerate(cards):
+        cues.append({"cue": f"impact_gfx{i}", "asset": "synthesised impact",
+                     "provenance": "generated in D7", "gain_db": at.get("impact_gain_db", -17),
+                     "at": round(c["start"], 2), "purpose": "lands the card"})
+        near = [pc for pc in pic_cuts if abs(pc - c["start"]) < 0.45]
+        if near:
+            cues.append({"cue": f"whoosh_gfx{i}", "asset": "synthesised whoosh",
+                         "provenance": "generated in D7",
+                         "gain_db": at.get("whoosh_gain_db", -20),
+                         "at": round(c["start"] - 0.30, 2),
+                         "purpose": "straddles the cut into the card"})
+
+    # --- the line that carries the takeaway gets a riser that stops dead on it
+    hooks = store.read_json(cid, "artifacts/hook_cards.v1.json")["payload"]["cards"]
+    punch = [e for e in events if e.get("purpose", "").startswith("punch")]
+    if punch:
+        t_punch = punch[0]["output_in"]
+        cues.append({"cue": "riser", "asset": "synthesised riser", "provenance": "generated in D7",
+                     "gain_db": at.get("riser_gain_db", -21), "at": round(max(0.0, t_punch - 1.35), 2),
+                     "purpose": "builds into the claim, stops dead on it"})
+        cues.append({"cue": "impact_claim", "asset": "synthesised impact + sub",
+                     "provenance": "generated in D7", "gain_db": at.get("impact_gain_db", -17),
+                     "at": round(t_punch, 3), "purpose": "lands the claim exactly on the cut"})
+
+    # --- only the cuts that matter get a sound: quiet whooshes on picture changes
+    # that are neither already sounded by a card nor within 0.6 s of another cue
+    sounded = [c["at"] for c in cues]
+    for i, pc in enumerate(pic_cuts):
+        if any(abs(pc - s2) < 0.6 for s2 in sounded):
+            continue
+        cues.append({"cue": f"whoosh_{i}", "asset": "synthesised whoosh",
+                     "provenance": "generated in D7", "gain_db": at.get("whoosh_soft_db", -26),
+                     "at": round(pc - 0.26, 2), "purpose": "soft air on a picture change"})
+        sounded.append(pc)
+
+    # ---------------- mix
+    inputs = ["-i", str(dialogue), "-i", str(bed_path)]
+    # every layer is forced to 48 kHz stereo before mixing: a format mismatch here
+    # is what silently kills a sidechain and leaves the bed sitting on the voice
+    filters = [f"[0:a]loudnorm=I={lufs - 5}:TP={tp - 5}:LRA=11,aresample={sfx.SR},"
+               f"aformat=channel_layouts=stereo,asplit=2[dia][sc]",
+               f"[1:a]atrim=0:{dur},asetpts=N/SR/TB,aresample={sfx.SR},"
+               f"aformat=channel_layouts=stereo[bed]"]
+    filters.append("[bed][sc]sidechaincompress=threshold=0.05:ratio=6:attack=8:release=300"
+                   ":makeup=1[bedduck]")
+    mix = ["[dia]", "[bedduck]"]
     idx = 2
-    for c in cues:
-        if c["cue"].startswith("whoosh"):
-            inputs += ["-i", str(whoosh)]
-            ms = int(c["at"] * 1000)
-            filters.append(f"[{idx}:a]adelay={ms}|{ms},volume={c['gain_db']}dB[w{idx}]")
-            mix.append(f"[w{idx}]"); idx += 1
-        elif c["cue"] == "thump" or c["cue"].startswith("thump_"):
-            inputs += ["-i", str(thump)]
-            ms = int(c["at"] * 1000)
-            filters.append(f"[{idx}:a]adelay={ms}|{ms},volume={c['gain_db']}dB[t]")
-            mix.append("[t]"); idx += 1
-        elif c["cue"] == "riser":
-            inputs += ["-i", str(riser)]
-            filters.append(f"[{idx}:a]volume={c['gain_db']}dB,atrim=0:0.9[r]")
-            mix.append("[r]"); idx += 1
+    for c in cues[1:]:
+        src = im_ if c["cue"].startswith("impact_claim") else (
+            im_ if c["cue"].startswith("impact") else (
+                wh if c["cue"].startswith("whoosh") else rs))
+        inputs += ["-i", str(src)]
+        ms = int(max(0.0, c["at"]) * 1000)
+        filters.append(f"[{idx}:a]adelay={ms}|{ms},volume={c['gain_db']}dB[s{idx}]")
+        mix.append(f"[s{idx}]")
+        idx += 1
+    if any(c["cue"] == "impact_claim" for c in cues):
+        inputs += ["-i", str(sub)]
+        at_ms = int([c for c in cues if c["cue"] == "impact_claim"][0]["at"] * 1000)
+        filters.append(f"[{idx}:a]adelay={at_ms}|{at_ms},volume=-24dB[s{idx}]")
+        mix.append(f"[s{idx}]")
+        idx += 1
     filters.append(f"{''.join(mix)}amix=inputs={len(mix)}:duration=first:normalize=0,"
                    f"loudnorm=I={lufs}:TP={tp}:LRA=11,alimiter=limit=0.89:level=false,"
                    f"aresample=48000[aout]")
@@ -162,6 +162,8 @@ def main() -> int:
                     "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
                     "-ac", "2", str(audio)], check=True)
     store.artifact(cid, f"cue_sheet_{clip}", {"clip": clip, "duration": dur,
+                                              "rule": "impacts on the frame, whooshes straddling, "
+                                                      "riser stopping dead on the claim",
                                               "target": {"lufs": lufs, "true_peak": tp},
                                               "cues": cues})
     dialogue.unlink(missing_ok=True)

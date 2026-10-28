@@ -1,25 +1,19 @@
 #!/usr/bin/env python3
-"""Motion graphics — the "explain what he is saying" layer.
+"""Motion graphics — the "explain what he is saying" layer, built to editor craft.
 
-Retention editing research (and every strong podcast edit) agrees on the same
-three moves:
+What makes a graphic read as human-made rather than machine-made (all four come
+from how editors actually work, see docs/CRAFT.md):
 
-  * a visual change every 2-3 s, not a static talking head;
-  * graphics that *illustrate the line* — an animated counter on the number, a
-    compare card on the comparison, avatars on "400 people";
-  * captions that move with the speech.
+  1. typography — a condensed display face for numbers, a grotesque for labels,
+     never the default system sans;
+  2. hierarchy — kicker, value, unit, rule. A viewer reads it in one glance;
+  3. motion — ease-out-expo entries with a stagger between layers, exits fast and
+     short; nothing fades in linearly;
+  4. restraint — a scrim and a single accent rule instead of a heavy black box,
+     plus a light grain so the card sits in the same film as the footage.
 
-The campaign brief forbids outside footage, so nothing here is stock: every
-card is drawn from primitives (rects, polygons, text) at render time, animated
-frame by frame, and emitted as an alpha video that the compositor drops over the
-talking head. Cards are region renders, so a card only ever touches its own
-band of the frame — it cannot cover the speaker's face.
-
-Card vocabulary (each returns frames for a set of local times):
-  counter   one number, rolling from 0 to its value, with a unit
-  cost      "cost per person / month" with a money illustration
-  people    an N-dot avatar grid that fills as the number counts up
-  math      an equation that assembles term by term ("4,000,000 / 400 = 10,000")
+Every card is drawn from primitives at render time (the campaign forbids outside
+footage) and emitted as an alpha video for the compositor.
 """
 from __future__ import annotations
 
@@ -31,149 +25,396 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 FF = imageio_ffmpeg.get_ffmpeg_exe()
-FONT_DIR = Path("/usr/share/fonts/truetype/dejavu")
+ASSETS = Path(__file__).resolve().parent.parent / "assets"
 LIME = (198, 255, 0)
-INK = (10, 12, 16)
 WHITE = (255, 255, 255)
-GREY = (168, 178, 190)
+INK = (8, 10, 13)
+GREY = (176, 186, 198)
+MARGIN = 46
 
 
-def font(size: int, bold: bool = True) -> ImageFont.FreeTypeFont:
-    name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
-    return ImageFont.truetype(str(FONT_DIR / name), size)
+def _font(file: str, size: int):
+    for base in (ASSETS, Path("/usr/share/fonts/truetype/dejavu")):
+        p = base / file
+        if p.exists():
+            return ImageFont.truetype(str(p), size)
+    raise SystemExit(f"font missing: {file}")
 
 
-def ease_out(t: float) -> float:
+def display(size: int):
+    return _font("Anton-Regular.ttf", size)
+
+
+def grotesk(size: int, bold: bool = True):
+    return _font("ArchivoBlack-Regular.ttf" if bold else "Inter.ttf", size)
+
+
+def ui(size: int):
+    return _font("Inter.ttf", size)
+
+
+# ------------------------------------------------------------------ easing
+def ease_out_expo(t: float) -> float:
+    t = max(0.0, min(1.0, t))
+    return 1.0 if t >= 1 else 1 - 2 ** (-10 * t)
+
+
+def ease_out_cubic(t: float) -> float:
     t = max(0.0, min(1.0, t))
     return 1 - (1 - t) ** 3
 
 
-def ease_back(t: float) -> float:
+def ease_inout_cubic(t: float) -> float:
     t = max(0.0, min(1.0, t))
-    c = 1.9
-    return 1 + (c + 1) * (t - 1) ** 3 + c * (t - 1) ** 2
+    return 4 * t ** 3 if t < 0.5 else 1 - (-2 * t + 2) ** 3 / 2
 
 
-def ease_inout(t: float) -> float:
+def spring(t: float, damp: float = 0.55) -> float:
+    """A small settle overshoot — the difference between 'moved' and 'animated'."""
     t = max(0.0, min(1.0, t))
-    return 3 * t * t - 2 * t * t * t
+    if t >= 1:
+        return 1.0
+    return 1 - (2.718 ** (-6 * t)) * np.cos(9 * t) * damp - (1 - damp)
 
 
-def panel(w: int, h: int, alpha: int = 188, radius: int = 34) -> Image.Image:
+# ------------------------------------------------------------------ surfaces
+def scrim(w: int, h: int, radius: int = 26, strength: int = 158) -> Image.Image:
+    """Dark glass card: soft shadow, no hard box, one lime registration rule."""
     im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    sh = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ds = ImageDraw.Draw(sh)
+    ds.rounded_rectangle([8, 16, w - 8, h - 8], radius=radius, fill=(0, 0, 0, 150))
+    im.alpha_composite(sh.filter(ImageFilter.GaussianBlur(14)))
     d = ImageDraw.Draw(im)
-    d.rounded_rectangle([6, 10, w - 6, h - 6], radius=radius, fill=(0, 0, 0, 120))
-    im = im.filter(ImageFilter.GaussianBlur(10))
-    d = ImageDraw.Draw(im)
-    d.rounded_rectangle([0, 0, w - 12, h - 16], radius=radius,
-                        fill=(INK[0], INK[1], INK[2], alpha))
-    d.rounded_rectangle([0, 0, w - 12, h - 16], radius=radius,
-                        outline=(255, 255, 255, 34), width=2)
-    d.rounded_rectangle([34, 0, 34 + 96, 7], radius=4, fill=LIME + (255,))
+    d.rounded_rectangle([0, 0, w - 16, h - 20], radius=radius,
+                        fill=(INK[0], INK[1], INK[2], strength))
+    d.rounded_rectangle([6, 6, w - 22, h - 26], radius=radius - 6,
+                        outline=(255, 255, 255, 16), width=1)
+    # registration rule: reads as a designer's mark, not a template border
+    d.rounded_rectangle([0, 26, 7, h - 46], radius=4, fill=LIME + (255,))
     return im
 
 
-def text(d: ImageDraw.ImageDraw, xy, s, f, fill=WHITE, anchor="mm", stroke=0,
-         stroke_fill=(0, 0, 0, 220)):
-    d.text(xy, s, font=f, fill=fill, anchor=anchor,
-           stroke_width=stroke, stroke_fill=stroke_fill)
+def band(w: int, h: int, from_bottom: float = 0.55, top_alpha: int = 0,
+         bottom_alpha: int = 205) -> Image.Image:
+    """A soft vertical gradient over the footage — no hard box, no player chrome."""
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    px = im.load()
+    for y in range(h):
+        f = y / max(1, h - 1)
+        a = int(top_alpha + (bottom_alpha - top_alpha) * (f ** 1.6))
+        for x in range(w):
+            px[x, y] = (6, 8, 11, a)
+    d = ImageDraw.Draw(im)
+    d.rectangle([MARGIN, int(h * 0.10), MARGIN + 92, int(h * 0.10) + 8], fill=LIME + (255,))
+    return im
 
 
-def money_icon(w: int, h: int, t: float) -> Image.Image:
-    """A banknote drawn with a fake 3D tilt: two offset quads plus a face."""
+def grain(im: Image.Image, amount: float = 5.0, seed: int = 0) -> Image.Image:
+    """A little film grain so the card belongs to the same image as the footage."""
+    rng = np.random.default_rng(seed)
+    a = np.array(im).astype(np.int16)
+    n = rng.normal(0, amount, a.shape[:2])[:, :, None]
+    a[:, :, :3] = np.clip(a[:, :, :3] + n, 0, 255)
+    return Image.fromarray(a.astype(np.uint8), "RGBA")
+
+
+def draw_underline(d: ImageDraw.ImageDraw, x0: int, y: int, w: int, progress: float,
+                   thickness: int = 7, colour=LIME):
+    """Hand-drawn feel: the line grows from the left with a gentle wobble."""
+    if progress <= 0:
+        return
+    steps = max(2, int(28 * progress))
+    pts = []
+    for i in range(steps + 1):
+        f = i / steps
+        pts.append((x0 + int(w * progress * f), y + int(2.2 * np.sin(f * 7.5))))
+    d.line(pts, fill=colour + (255,), width=thickness, joint="curve")
+
+
+def glyph(d, xy, s, f, fill=WHITE, anchor="lm", tracking: float = 0.0,
+          stroke: int = 0, stroke_fill=(0, 0, 0, 200)):
+    """Text with optional letter-spacing (PIL has none, so draw char by char)."""
+    if tracking == 0:
+        d.text(xy, s, font=f, fill=fill, anchor=anchor, stroke_width=stroke,
+               stroke_fill=stroke_fill)
+        return
+    x, y = xy
+    total = sum(d.textlength(c, font=f) + tracking for c in s) - tracking
+    if anchor[0] == "m":
+        x -= total / 2
+    for c in s:
+        d.text((x, y), c, font=f, fill=fill, anchor="l" + anchor[1], stroke_width=stroke,
+               stroke_fill=stroke_fill)
+        x += d.textlength(c, font=f) + tracking
+
+
+def kicker(d, xy, s, colour=LIME, size=30):
+    glyph(d, xy, s.upper(), ui(size), fill=colour + (255,), anchor="lm", tracking=6)
+
+
+def money_note(w: int, h: int, t: float) -> Image.Image:
+    """A banknote with a proper isometric tilt and engraved detail."""
     im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    k = ease_out(t)
-    tilt = 0.10 * (1 - k) + 0.02 * np.sin(t * 6)
+    k = ease_out_cubic(min(1.0, t / 0.5))
+    tilt = 0.13 * (1 - k)
     cx, cy = w / 2, h / 2
-    bw, bh = w * 0.80, h * 0.58
+    bw, bh = w * 0.74, h * 0.50
 
-    def quad(scale, dy, skew):
-        left = cx - bw * scale / 2 + skew * 14
-        right = cx + bw * scale / 2 + skew * 14
-        top = cy - bh * scale / 2 + dy
-        bot = cy + bh * scale / 2 + dy
-        return [(left + skew * 8, top), (right - skew * 8, top + tilt * 26),
-                (right - skew * 8, bot + tilt * 10), (left + skew * 8, bot)]
+    def quad(scale, dy):
+        half_w = bw * scale / 2
+        half_h = bh * scale / 2
+        return [(cx - half_w + tilt * 26, cy - half_h + dy),
+                (cx + half_w + tilt * 26, cy - half_h + dy + tilt * 30),
+                (cx + half_w - tilt * 18, cy + half_h + dy + tilt * 8),
+                (cx - half_w - tilt * 18, cy + half_h + dy - tilt * 16)]
 
-    for i, (scale, dy) in enumerate([(0.90, 24), (0.96, 12), (1.0, 0)]):
-        pts = quad(scale, dy, i - 1)
-        col = (28 + i * 8, 74 + i * 10, 46 + i * 8, 255) if i < 2 else (36, 132, 76, 255)
-        d.polygon(pts, fill=col, outline=(200, 255, 210, 120))
-    pts = quad(1.0, 0, 0)
-    d.polygon(pts, fill=(44, 156, 90, 255), outline=(220, 255, 225, 160))
+    for i, (scale, dy) in enumerate([(0.88, 30), (0.94, 15), (1.0, 0)]):
+        col = (24 + i * 6, 62 + i * 12, 40 + i * 10, 255) if i < 2 else (30, 118, 70, 255)
+        d.polygon(quad(scale, dy), fill=col, outline=(150, 220, 175, 90))
+    pts = quad(1.0, 0)
+    d.polygon(pts, fill=(36, 140, 82, 255), outline=(196, 245, 210, 180))
     cx2 = sum(p[0] for p in pts) / 4
     cy2 = sum(p[1] for p in pts) / 4
-    r = bh * 0.22 * k
-    d.ellipse([cx2 - r, cy2 - r, cx2 + r, cy2 + r], outline=(220, 255, 225, 220), width=4)
-    f = font(int(bh * 0.30))
-    text(d, (cx2, cy2 + 1), "$", f, fill=(230, 255, 235, 235), stroke=0)
+    r = bh * 0.26
+    d.ellipse([cx2 - r, cy2 - r * 0.92, cx2 + r, cy2 + r * 0.92],
+              outline=(210, 250, 220, 210), width=4)
+    d.text((cx2, cy2 + 1), "$", font=display(int(bh * 0.42)), fill=(225, 250, 232, 235),
+           anchor="mm")
     return im
 
 
-def bars(w: int, h: int, t: float, values, labels=None) -> Image.Image:
-    """Isometric bar chart: each bar grows, top face gives the 3D read."""
-    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+def icon_chip(im, box, t):
     d = ImageDraw.Draw(im)
-    n = len(values)
-    gap = w * 0.10 / max(1, n - 1)
-    bw = (w * 0.90 - gap * (n - 1)) / n
-    base = h * 0.86
-    mx = max(values) or 1
-    for i, v in enumerate(values):
-        local = ease_out(max(0.0, min(1.0, (t - 0.12 * i) / 0.5)))
-        bh = (v / mx) * h * 0.66 * local
-        x0 = w * 0.05 + i * (bw + gap)
-        top = base - bh
-        depth = 16 * local
-        d.polygon([(x0, top), (x0 + depth, top - depth * 0.55),
-                   (x0 + bw + depth, top - depth * 0.55), (x0 + bw, top)],
-                  fill=(170, 220, 0, 235) if i == n - 1 else (86, 96, 108, 235))
-        d.rectangle([x0, top, x0 + bw, base],
-                    fill=LIME + (240,) if i == n - 1 else (52, 60, 70, 230))
-    return im
+    x0, y0, x1, y1 = box
+    s = min(x1 - x0, y1 - y0)
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    r = s * 0.26
+    k = ease_out_cubic(min(1.0, t / 0.45))
+    r *= 0.85 + 0.15 * k
+    d.rounded_rectangle([cx - r, cy - r, cx + r, cy + r], radius=r * 0.26,
+                        outline=LIME + (245,), width=5)
+    d.rounded_rectangle([cx - r * 0.40, cy - r * 0.40, cx + r * 0.40, cy + r * 0.40],
+                        radius=r * 0.16, fill=LIME + (210,))
+    for f in (-0.45, 0.0, 0.45):
+        for sgn in (-1, 1):
+            d.line([cx + f * r, cy + sgn * r * 1.02, cx + f * r, cy + sgn * r * 1.40],
+                   fill=LIME + (220,), width=4)
+            d.line([cx + sgn * r * 1.02, cy + f * r, cx + sgn * r * 1.40, cy + f * r],
+                   fill=LIME + (220,), width=4)
 
 
-def dots_grid(w: int, h: int, t: float, total: int, shown: int) -> Image.Image:
-    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+def icon_globe(im, box, t):
     d = ImageDraw.Draw(im)
-    cols = 20
-    rows = int(np.ceil(total / cols))
-    pad = 6
-    cw = (w - pad * (cols + 1)) / cols
-    ch = (h - pad * (rows + 1)) / rows
-    r = min(cw, ch) * 0.30
-    for i in range(total):
-        c, rr = i % cols, i // cols
-        cx = pad + c * (cw + pad) + cw / 2
-        cy = pad + rr * (ch + pad) + ch / 2
-        on = i < shown
-        pop = 1.0
-        if on:
-            age = (shown - i) / max(1, total * 0.25)
-            pop = 1.0 + 0.55 * max(0.0, 0.25 - age) / 0.25
-        elif i >= shown:
-            pop = 1.0
-        rr2 = r * pop
-        if on:
-            d.ellipse([cx - rr2, cy - rr2, cx + rr2, cy + rr2], fill=LIME + (245,))
-        else:
-            d.ellipse([cx - rr2, cy - rr2, cx + rr2, cy + rr2],
-                      fill=(255, 255, 255, 26), outline=(255, 255, 255, 40))
-    return im
+    x0, y0, x1, y1 = box
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    r = (x1 - x0) / 2 * (0.86 + 0.14 * ease_out_cubic(min(1.0, t / 0.45)))
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=LIME + (240,), width=5)
+    d.ellipse([cx - r * 0.44, cy - r, cx + r * 0.44, cy + r], outline=LIME + (150,), width=3)
+    d.line([cx - r, cy, cx + r, cy], fill=LIME + (150,), width=3)
+    d.arc([cx - r, cy - r * 0.92, cx + r, cy + r * 0.92], 200, 340, fill=LIME + (130,), width=3)
+    d.arc([cx - r, cy - r * 0.92, cx + r, cy + r * 0.92], 20, 160, fill=LIME + (130,), width=3)
 
 
-def fade(im: Image.Image, a: float) -> Image.Image:
+# ------------------------------------------------------------------ card bodies
+def _layout(w: int, h: int, kicker_text: str, value: str, unit: str, sub: str,
+            value_px: int = 120, unit_px: int = 38, sub_px: int = 29):
+    """Draw the shared hierarchy: kicker / value + unit / rule / sub."""
+    im = scrim(w, h)
+    d = ImageDraw.Draw(im)
+    if kicker_text:
+        kicker(d, (MARGIN + 16, 54), kicker_text)
+    f = display(value_px)
+    while value_px > 56 and d.textlength(value, font=f) > w * 0.80:
+        value_px -= 4
+        f = display(value_px)
+    vy = int(h * 0.50)
+    d.text((MARGIN, vy), value, font=f, fill=WHITE + (255,), anchor="lm")
+    vw = d.textlength(value, font=f)
+    if unit:
+        d.text((MARGIN + vw + 14, vy + value_px * 0.20), unit, font=ui(unit_px),
+               fill=LIME + (255,), anchor="lm")
+    if sub:
+        d.text((MARGIN, h - 52), sub, font=ui(sub_px), fill=GREY + (255,), anchor="lm")
+    return im, d, vy + value_px * 0.42, vw
+
+
+def fmt(v: float, currency: bool = True) -> str:
+    s = f"{int(round(v)):,}"
+    return ("$" + s) if currency else s
+
+
+def card_counter(dur, w, h, *, label, value, unit, currency=True, accent_note=""):
+    def frame(t):
+        k = ease_out_expo(min(1.0, t / max(0.55, dur * 0.38)))
+        im = band(w, h)
+        d = ImageDraw.Draw(im)
+        if label:
+            kicker(d, (MARGIN, int(h * 0.26)), label)
+        value_s = fmt(value * k, currency)
+        px = 132
+        f = display(px)
+        while px > 64 and d.textlength(value_s, font=f) > w * 0.74:
+            px -= 4
+            f = display(px)
+        d.text((MARGIN, int(h * 0.58)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
+        vw = d.textlength(value_s, font=f)
+        if unit:
+            d.text((MARGIN + vw + 16, int(h * 0.58) + px * 0.18), unit, font=ui(36),
+                   fill=LIME + (255,), anchor="lm")
+        if accent_note:
+            d.text((MARGIN, h - 46), accent_note, font=ui(29), fill=(205, 212, 220, 255),
+                   anchor="lm")
+        draw_underline(d, MARGIN, int(h * 0.58 + px * 0.52), int(w * 0.26),
+                       ease_inout_cubic(min(1.0, t / 0.7)))
+        return grain(im, 3.0, seed=int(t * 30) % 97)
+    return frame
+
+
+def card_cost(dur, w, h, *, value, label, sub):
+    def frame(t):
+        k = ease_out_expo(min(1.0, t / max(0.5, dur * 0.34)))
+        im = band(w, h)
+        d = ImageDraw.Draw(im)
+        kicker(d, (MARGIN, int(h * 0.26)), label)
+        value_s = fmt(value * k)
+        px = 126
+        f = display(px)
+        while px > 60 and d.textlength(value_s, font=f) > w * 0.52:
+            px -= 4
+            f = display(px)
+        d.text((MARGIN, int(h * 0.60)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
+        vw = d.textlength(value_s, font=f)
+        d.text((MARGIN + vw + 14, int(h * 0.60) + px * 0.18), "/mo", font=ui(36),
+               fill=LIME + (255,), anchor="lm")
+        if sub:
+            d.text((MARGIN, h - 46), sub, font=ui(29), fill=(205, 212, 220, 255), anchor="lm")
+        draw_underline(d, MARGIN, int(h * 0.60 + px * 0.52), int(w * 0.22),
+                       ease_inout_cubic(min(1.0, t / 0.7)))
+        note = money_note(int(w * 0.22), int(h * 0.62), t)
+        im.alpha_composite(note, (int(w * 0.72), int(h * 0.22)))
+        return grain(im, 3.0, seed=int(t * 30) % 97)
+    return frame
+
+
+def card_people(dur, w, h, *, total, label, sub):
+    def frame(t):
+        k = ease_inout_cubic(min(1.0, t / max(0.8, dur * 0.55)))
+        im = band(w, h)
+        d = ImageDraw.Draw(im)
+        kicker(d, (MARGIN, int(h * 0.26)), label)
+        value_s = str(int(total * k))
+        f = display(124)
+        d.text((MARGIN, int(h * 0.60)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
+        vw = d.textlength(value_s, font=f)
+        d.text((MARGIN + vw + 14, int(h * 0.60) + 22), "people", font=ui(36),
+               fill=LIME + (255,), anchor="lm")
+        if sub:
+            d.text((MARGIN, h - 46), sub, font=ui(29), fill=(205, 212, 220, 255), anchor="lm")
+        draw_underline(d, MARGIN, int(h * 0.60 + 64), int(w * 0.22),
+                       ease_inout_cubic(min(1.0, t / 0.7)))
+        gw, gh = int(w * 0.26), int(h * 0.50)
+        g = Image.new("RGBA", (gw, gh), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(g)
+        cols, rows, pad = 20, 20, 3
+        cw = (gw - pad * (cols + 1)) / cols
+        ch = (gh - pad * (rows + 1)) / rows
+        r = min(cw, ch) * 0.34
+        shown = int(400 * k)
+        for i in range(400):
+            c, rr = i % cols, i // cols
+            cx = pad + c * (cw + pad) + cw / 2
+            cy = pad + rr * (ch + pad) + ch / 2
+            if i < shown:
+                gd.ellipse([cx - r, cy - r, cx + r, cy + r], fill=LIME + (230,))
+            else:
+                gd.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255, 26))
+        im.alpha_composite(g, (int(w * 0.70), int(h * 0.22)))
+        return grain(im, 3.0, seed=int(t * 30) % 97)
+    return frame
+
+
+def card_math(dur, w, h, *, left, right, result, label):
+    def frame(t):
+        im = band(w, h)
+        d = ImageDraw.Draw(im)
+        kicker(d, (MARGIN, int(h * 0.26)), label)
+        parts = [(left, display(62), WHITE), ("÷", display(52), GREY),
+                 (right, display(62), WHITE), ("=", display(52), GREY),
+                 (result, display(78), LIME)]
+        x = MARGIN
+        base_y = int(h * 0.56)
+        for i, (p, f, col) in enumerate(parts):
+            appear = ease_out_expo(min(1.0, max(0.0, (t - 0.10 * i) / 0.28)))
+            if appear <= 0:
+                break
+            d.text((x, base_y + int((1 - appear) * 20)), p, font=f,
+                   fill=col + (int(255 * appear),), anchor="lm")
+            x += d.textlength(p, font=f) + 16
+        d.text((MARGIN, h - 46), "per person, per month", font=ui(29),
+               fill=(205, 212, 220, 255), anchor="lm")
+        draw_underline(d, MARGIN, int(base_y + 58), int(w * 0.34),
+                       ease_inout_cubic(min(1.0, max(0.0, (t - 0.45) / 0.6))))
+        return grain(im, 3.0, seed=int(t * 30) % 97)
+    return frame
+
+
+def card_chip(dur, w, h, *, label, sub, icon="ai"):
+    def frame(t):
+        im = band(w, h, top_alpha=0, bottom_alpha=190)
+        d = ImageDraw.Draw(im)
+        (icon_chip if icon == "ai" else icon_globe)(
+            im, (int(w * 0.72), int(h * 0.18), int(w * 0.95), int(h * 0.78)), t)
+        f = display(66)
+        while f.size > 40 and d.textlength(label, font=f) > w * 0.54:
+            f = display(f.size - 3)
+        d.text((MARGIN, int(h * 0.52)), label, font=f, fill=WHITE + (255,), anchor="lm")
+        d.text((MARGIN, int(h * 0.74)), sub, font=ui(34), fill=LIME + (245,), anchor="lm")
+        draw_underline(d, MARGIN, int(h * 0.84), int(w * 0.22),
+                       ease_inout_cubic(min(1.0, t / 0.6)))
+        return grain(im, 3.0, seed=int(t * 30) % 97)
+    return frame
+
+
+def card_quote(dur, w, h, *, text_line, who):
+    def frame(t):
+        im = band(w, h, top_alpha=0, bottom_alpha=200)
+        d = ImageDraw.Draw(im)
+        k = ease_out_expo(min(1.0, t / 0.4))
+        f = grotesk(48)
+        while f.size > 26 and d.textlength(text_line, font=f) > w * 0.82:
+            f = grotesk(f.size - 2)
+        d.text((MARGIN, int(h * 0.50)), text_line, font=f,
+               fill=WHITE + (int(255 * k),), anchor="lm")
+        d.line([MARGIN, int(h * 0.66), MARGIN + int(34 * k), int(h * 0.66)],
+               fill=LIME + (255,), width=5)
+        d.text((MARGIN + 50, int(h * 0.66)), who.upper(), font=ui(26), fill=(205, 212, 220, 255),
+               anchor="lm")
+        return grain(im, 3.0, seed=int(t * 30) % 97)
+    return frame
+
+
+CARD_TYPES = {"counter": card_counter, "cost": card_cost, "people": card_people,
+              "math": card_math, "chip": card_chip, "quote": card_quote}
+
+
+def _composite_move(im: Image.Image, dy: int, k: float) -> Image.Image:
+    out = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    out.alpha_composite(im, (0, dy))
+    return out if k >= 1 else _alpha(out, k)
+
+
+def _alpha(im: Image.Image, a: float) -> Image.Image:
     if a >= 0.999:
         return im
     im = im.copy()
-    alpha = im.getchannel("A").point(lambda v: int(v * a))
-    im.putalpha(alpha)
+    im.putalpha(im.getchannel("A").point(lambda v: int(v * a)))
     return im
 
 
-def scale_in(im: Image.Image, k: float) -> Image.Image:
-    if k >= 0.999:
+def _scale(im: Image.Image, k: float) -> Image.Image:
+    if abs(k - 1.0) < 0.002:
         return im
     w, h = im.size
     nw, nh = max(2, int(w * k)), max(2, int(h * k))
@@ -183,165 +424,7 @@ def scale_in(im: Image.Image, k: float) -> Image.Image:
     return out
 
 
-def fmt_money(v: float, currency: bool = True) -> str:
-    s = f"{int(round(v)):,}"
-    return ("$" + s) if currency else s
-
-
-# ----------------------------------------------------------------- card renderers
-def card_counter(dur: float, w: int, h: int, *, label: str, value: float, unit: str,
-                 currency: bool = True, accent_note: str = ""):
-    def frame(t: float) -> Image.Image:
-        base = panel(w, h)
-        d = ImageDraw.Draw(base)
-        text(d, (44, 58), label.upper(), font(34), fill=LIME + (255,), anchor="lm")
-        k = ease_out(min(1.0, t / max(0.9, dur * 0.45)))
-        num = value * k
-        size = 128
-        f = font(size)
-        while size > 60 and d.textlength(fmt_money(num, currency), font=f) > w * 0.86:
-            size -= 6
-            f = font(size)
-        text(d, (44, h * 0.52), fmt_money(num, currency), f, fill=WHITE + (255,), anchor="lm")
-        tw = d.textlength(fmt_money(num, currency), font=f)
-        text(d, (44 + tw + 16, h * 0.52 + size * 0.22), unit, font(44), fill=LIME + (255,),
-             anchor="lm")
-        if accent_note:
-            text(d, (44, h * 0.80), accent_note, font(32, False), fill=GREY + (255,), anchor="lm")
-        return base
-    return frame
-
-
-def card_cost(dur: float, w: int, h: int, *, value: float, label: str, sub: str):
-    def frame(t: float) -> Image.Image:
-        base = panel(w, h)
-        d = ImageDraw.Draw(base)
-        text(d, (44, 56), label.upper(), font(33), fill=LIME + (255,), anchor="lm")
-        k = ease_out(min(1.0, t / max(0.8, dur * 0.4)))
-        num = value * k
-        f = font(120)
-        while d.textlength(fmt_money(num), font=f) > w * 0.52:
-            f = font(f.size - 6)
-        text(d, (44, h * 0.50), fmt_money(num), f, fill=WHITE + (255,), anchor="lm")
-        tw = d.textlength(fmt_money(num), font=f)
-        text(d, (44 + tw + 14, h * 0.50 + 20), "/mo", font(44), fill=LIME + (255,), anchor="lm")
-        text(d, (44, h * 0.76), sub, font(31, False), fill=GREY + (255,), anchor="lm")
-        icon = money_icon(int(w * 0.30), int(h * 0.46), min(1.0, t / 0.6))
-        base.alpha_composite(icon, (int(w * 0.66), int(h * 0.34)))
-        return base
-    return frame
-
-
-def card_people(dur: float, w: int, h: int, *, total: int, label: str, sub: str):
-    def frame(t: float) -> Image.Image:
-        base = panel(w, h)
-        d = ImageDraw.Draw(base)
-        text(d, (44, 56), label.upper(), font(33), fill=LIME + (255,), anchor="lm")
-        k = ease_inout(min(1.0, t / max(1.0, dur * 0.62)))
-        shown = int(total * k)
-        f = font(112)
-        text(d, (44, h * 0.48), str(int(total * k)), f, fill=WHITE + (255,), anchor="lm")
-        tw = d.textlength(str(int(total * k)), font=f)
-        text(d, (44 + tw + 14, h * 0.48 + 18), "people", font(44), fill=LIME + (255,), anchor="lm")
-        text(d, (44, h * 0.74), sub, font(31, False), fill=GREY + (255,), anchor="lm")
-        g = dots_grid(int(w * 0.44), int(h * 0.62), min(1.0, t / 0.5), 400, int(shown / max(1, total) * 400))
-        base.alpha_composite(g, (int(w * 0.52), int(h * 0.24)))
-        return base
-    return frame
-
-
-def card_math(dur: float, w: int, h: int, *, left: str, right: str, result: str, label: str):
-    def frame(t: float) -> Image.Image:
-        base = panel(w, h)
-        d = ImageDraw.Draw(base)
-        text(d, (44, 56), label.upper(), font(33), fill=LIME + (255,), anchor="lm")
-        parts = [left, "÷", right, "=", result]
-        x = 44
-        for i, p in enumerate(parts):
-            appear = min(1.0, max(0.0, (t - 0.22 * i) / 0.30))
-            if appear <= 0:
-                break
-            col = LIME + (int(255 * appear),) if i == 4 else WHITE + (int(255 * appear),)
-            f = font(72 if i == 4 else 62)
-            d.text((x, h * 0.50), p, font=f, fill=col, anchor="lm")
-            x += d.textlength(p, font=f) + 20
-        text(d, (44, h * 0.78), "per person, per month", font(31, False),
-             fill=GREY + (255,), anchor="lm")
-        return base
-    return frame
-
-
-def icon_globe(im: Image.Image, box, t: float):
-    d = ImageDraw.Draw(im)
-    x0, y0, x1, y1 = box
-    cx, cy, r = (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=LIME + (235,), width=6)
-    d.ellipse([cx - r * 0.45, cy - r, cx + r * 0.45, cy + r], outline=LIME + (170,), width=4)
-    d.line([cx - r, cy, cx + r, cy], fill=LIME + (170,), width=4)
-    for f in (0.45, -0.45):
-        d.arc([cx - r, cy - r * abs(f) * 2.2, cx + r, cy + r * abs(f) * 2.2],
-              start=200 if f > 0 else 20, end=340 if f > 0 else 160,
-              fill=LIME + (150,), width=3)
-    d.line([cx - r * 1.15, cy + r * 0.55, cx + r * 1.15, cy + r * 0.55],
-           fill=(255, 255, 255, 60), width=2)
-
-
-def icon_ai(im: Image.Image, box, t: float):
-    d = ImageDraw.Draw(im)
-    x0, y0, x1, y1 = box
-    s = min(x1 - x0, y1 - y0)
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    r = s * 0.30
-    d.rounded_rectangle([cx - r, cy - r, cx + r, cy + r], radius=r * 0.28,
-                        outline=LIME + (240,), width=6)
-    d.rounded_rectangle([cx - r * 0.42, cy - r * 0.42, cx + r * 0.42, cy + r * 0.42],
-                        radius=r * 0.18, fill=LIME + (200,))
-    for k in (-0.5, 0.0, 0.5):
-        for sgn in (-1, 1):
-            d.line([cx + k * r, cy + sgn * r * 1.0, cx + k * r, cy + sgn * r * 1.45],
-                   fill=LIME + (230,), width=5)
-            d.line([cx + sgn * r * 1.0, cy + k * r, cx + sgn * r * 1.45, cy + k * r],
-                   fill=LIME + (230,), width=5)
-
-
-ICONS = {"globe": icon_globe, "ai": icon_ai}
-
-
-def card_chip(dur: float, w: int, h: int, *, label: str, sub: str, icon: str = "ai"):
-    def frame(t: float) -> Image.Image:
-        base = panel(w, h)
-        d = ImageDraw.Draw(base)
-        ICONS.get(icon, icon_ai)(base, (int(w * 0.60), int(h * 0.22),
-                                        int(w * 0.94), int(h * 0.80)), t)
-        f = font(64)
-        while f.size > 40 and d.textlength(label, font=f) > w * 0.52:
-            f = font(f.size - 3)
-        text(d, (44, h * 0.42), label, f, fill=WHITE + (255,), anchor="lm")
-        text(d, (44, h * 0.68), sub, font(40, False), fill=LIME + (240,), anchor="lm")
-        return base
-    return frame
-
-
-def card_quote(dur: float, w: int, h: int, *, text_line: str, who: str):
-    def frame(t: float) -> Image.Image:
-        base = panel(w, h)
-        d = ImageDraw.Draw(base)
-        text(d, (58, 96), "\u201c", font(104), fill=LIME + (255,), anchor="lm")
-        f = font(58)
-        while f.size > 34 and d.textlength(text_line, font=f) > w * 0.80:
-            f = font(f.size - 3)
-        text(d, (116, h * 0.40), text_line, f, fill=WHITE + (255,), anchor="lm")
-        text(d, (116, h * 0.66), who.upper(), font(30), fill=GREY + (255,), anchor="lm")
-        return base
-    return frame
-
-
-CARD_TYPES = {"counter": card_counter, "cost": card_cost, "people": card_people,
-              "math": card_math, "chip": card_chip, "quote": card_quote}
-
-
 def render_card(path: Path, spec: dict, fps: int = 30, size=(1080, 470)) -> dict:
-    """Render one card to an alpha video (qtrle) and return its manifest."""
     w, h = size
     dur = float(spec["end"]) - float(spec["start"])
     n = max(2, int(round(dur * fps)))
@@ -353,14 +436,18 @@ def render_card(path: Path, spec: dict, fps: int = 30, size=(1080, 470)) -> dict
     for i in range(n):
         t = i / fps
         im = maker(t)
-        a = 1.0
-        if t < 0.28:
-            a = t / 0.28
-        if t > dur - 0.22:
-            a = max(0.0, (dur - t) / 0.22)
-        im = fade(im, ease_out(a) if t < 0.28 else a)
-        if t < 0.42:
-            im = scale_in(im, 0.90 + 0.10 * ease_back(t / 0.42))
+        # entry: 26 px rise + 4% scale settle over 240 ms, opacity in 160 ms
+        if t < 0.24:
+            k = ease_out_expo(t / 0.24)
+            im = _composite_move(im, int(26 * (1 - k)), 1.0)
+            im = _scale(im, 0.965 + 0.035 * spring(t / 0.30))
+        # exit: 8 px lift, fast fade — a slow exit reads as a slideshow
+        if t > dur - 0.20:
+            k = (dur - t) / 0.20
+            im = _alpha(im, ease_out_cubic(k))
+            im = _composite_move(im, -int(8 * (1 - k)), 1.0)
+        if t < 0.16:
+            im = _alpha(im, ease_out_cubic(t / 0.16))
         p.stdin.write(np.array(im, dtype=np.uint8).tobytes())
     p.stdin.close()
     p.wait()

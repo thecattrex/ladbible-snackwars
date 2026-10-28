@@ -121,103 +121,108 @@ def number_pop(groups, brand, dur):
 def build_ass(path: Path, words, dur: float, hook: dict, brief: dict, suppress=()):
     cap = brief.get("captions", {})
     hk = brief.get("hook_card", {})
-    brand = cap.get("brand_colour_ass", "&H0000E5FF")   # lime in ASS BGR
+    brand = cap.get("brand_colour_ass", "&H0000E5FF")
     maxw = int(cap.get("max_words", 3))
-    hook_secs = float(hk.get("seconds", 2.8))
+    hook_secs = float(hk.get("seconds", 2.9))
+    H_W, H_H = 1080, 1920
 
     ev = []
-    # ---- hook card: placed in the empty band above the speaker's head, sized to
-    # the frame, never over his face. The face box comes from the framing
-    # department, so the card follows the actual picture instead of a guess.
     who = hook.get("who") or ""
     big = hook.get("text") or ""
     face = hook.get("face") or {}
-    fs_big = int(hk.get("fontsize", 104))
-    # fit the big line to 86% of the frame width (0.60 em per caps char, bold)
-    while fs_big > 54 and len(big) * fs_big * 0.60 > W * 0.86:
-        fs_big -= 4
-    line_h = int(fs_big * 1.18)
-    fs_who = int(hk.get("who_fontsize", 44))
-    face_top = int((face.get("top", 0.35)) * H)
-    min_y = int(hk.get("min_y", 292))
-    gap_who = 14
 
-    def fit(with_who):
-        bh = line_h + ((fs_who + gap_who) if with_who else 0) + 20
-        yb = face_top - 78 - line_h // 2
-        return yb, bh, (yb - bh // 2) >= min_y
+    # ---- hook: kicker + display line + draw-on rule, stacked in the empty band
+    face_top = int((face.get("top", 0.35)) * H_H)
+    hook_px = int(hk.get("fontsize", 112))
+    while hook_px > 62 and len(big) * hook_px * 0.44 > H_W * 0.86:
+        hook_px -= 3
+    line_h = int(hook_px * 1.14)
+    kick_px = int(hk.get("who_fontsize", 32))
+    min_y = int(hk.get("min_y", 250))
 
-    y_big, block_h, ok = fit(bool(who))
+    def layout(with_kicker):
+        block = line_h + ((kick_px + 22) if with_kicker else 0)
+        y_big = face_top - 74 - line_h // 2
+        return y_big, block, (y_big - block // 2) >= min_y
+
+    y_big, block_h, ok = layout(bool(who))
     if not ok and who:
-        who = ""                                    # drop the credit line, keep the hook
-        y_big, block_h, ok = fit(False)
-    if not ok:                                      # no room above: sit under the face
-        face_bottom = int((face.get("bottom", 0.55)) * H)
-        y_big = min(H - int(cap.get("margin_v", 520)) - 210, face_bottom + 34 + line_h // 2)
-    y_who = y_big - line_h // 2 - fs_who // 2 - 18 if who else y_big
+        who = ""
+        y_big, block_h, ok = layout(False)
+    if not ok:
+        face_bottom = int((face.get("bottom", 0.55)) * H_H)
+        y_big = min(H_H - int(cap.get("margin_v", 600)) - 250, face_bottom + 40 + line_h // 2)
+    y_kick = y_big - line_h // 2 - kick_px // 2 - 16 if who else y_big
+    rule_y = y_big + int(line_h * 0.62)
+
+    # the number in the hook gets the accent colour, the rest stays white
+    m = re.search(r"(\$?\d[\d,\.]*\s*(?:M|K|B|million|billion|k)?)", big, re.I)
+    if m:
+        a, b = big[:m.start()], big[m.start():m.end()]
+        c = big[m.end():]
+        big_ass = f"{a}{{\\c{brand}&}}{b}{{\\c&H00FFFFFF&}}{c}"
+    else:
+        big_ass = big
+
     if who:
         ev.append(f"Dialogue: 3,{clk(0)},{clk(hook_secs)},Who,"
-                  f"{{\\an5\\pos(540,{y_who})\\move(540,{y_who + 30},540,{y_who},0,220)"
-                  f"\\fad(120,220)}}{who}")
+                  f"{{\\an5\\pos(540,{y_kick})\\move(540,{y_kick + 18},540,{y_kick},0,200)"
+                  f"\\fad(90,180)}}{who}")
     ev.append(f"Dialogue: 4,{clk(0)},{clk(hook_secs)},Hook,"
-              f"{{\\an5\\pos(540,{y_big})\\move(540,{y_big + 44},540,{y_big},0,260)"
-              f"\\fad(140,240)\\t(260,420,\\fscx104\\fscy104)\\t(420,600,\\fscx100\\fscy100)}}{big}")
-    bar_w = int(hk.get("bar_w", min(660, int(len(big) * fs_big * 0.58))))
-    bar_y = y_big + line_h // 2 - 4
-    bar = (r"{\an5\pos(540," + str(bar_y) + r")\fad(120,200)\p1}"
-           + f"m 0 0 l {bar_w} 0 {bar_w} 12 0 12" + r"{\p0}")
-    ev.append(f"Dialogue: 2,{clk(0.25)},{clk(hook_secs)},Bar,{bar}")
-    text_w = min(int(W * 0.88), int(len(big) * fs_big * 0.60))
-    hook_box = {"y_top": int(min(y_big - line_h // 2, y_who - fs_who // 2)),
-                "y_bottom": int(bar_y + 12),
-                "x0": int(540 - text_w // 2), "x1": int(540 + text_w // 2),
-                "fontsize": fs_big, "who_shown": bool(who)}
+              f"{{\\an5\\pos(540,{y_big})\\move(540,{y_big + 30},540,{y_big},0,260)"
+              f"\\fad(110,200)\\t(240,420,\\fscx103\\fscy103)\\t(420,620,\\fscx100\\fscy100)}}"
+              f"{big_ass}")
+    bar_w = int(hk.get("bar_w", min(620, int(len(big) * hook_px * 0.46))))
+    bar = (r"{\an5\pos(540," + str(rule_y) + r")\fad(140,220)\p1}"
+           + f"m 0 0 l {bar_w} 0 {bar_w} 9 0 9" + r"{\p0}")
+    ev.append(f"Dialogue: 2,{clk(0.22)},{clk(hook_secs)},Bar,{bar}")
 
+    # ---- captions: 2-3 words, heavy grotesque, keyword in accent + capitalised
     def held(a, b):
         return any(b > s0 + 0.02 and a < s1 - 0.02 for s0, s1 in suppress)
 
     groups = merge_short([g for g in group_words([w for w in words if w["t"] < dur], maxw) if g])
     groups = [g for g in groups if not held(g[0]["t"], g[-1]["e"])]
+    y_cap = H_H - int(cap.get("margin_v", 600))
     for gi, g in enumerate(groups):
         start = max(0.0, g[0]["t"])
         nxt = groups[gi + 1][0]["t"] if gi + 1 < len(groups) else dur
-        end = min(g[-1]["e"] + .30, nxt - .03 if gi + 1 < len(groups) else dur)
-        end = max(end, start + 0.35)
+        end = min(g[-1]["e"] + .28, nxt - .04 if gi + 1 < len(groups) else dur)
+        end = max(end, start + 0.34)
         parts = []
         for w in g:
             word = w["w"]
             if cap.get("highlight", True) and KEYWORD.search(word):
-                parts.append(f"{{\\c{brand}&\\fscx112\\fscy112"
-                             f"\\t(0,90,\\fscx100\\fscy100)}}{word}{{\\r}}")
+                parts.append(f"{{\\c{brand}&\\fscx108\\fscy108"
+                             f"\\t(0,80,\\fscx100\\fscy100)}}{word.upper()}{{\\r}}")
             else:
                 parts.append(word)
         ev.append(f"Dialogue: 1,{clk(start)},{clk(end)},Cap,"
-                  f"{{\\fad(50,50)}}{' '.join(parts)}")
-
-    pop = number_pop(groups, brand, dur)
-    if pop and pop["start"] > hook_secs + 0.8 and not held(pop["start"], pop["end"]):
-        ev.append(f"Dialogue: 3,{clk(pop['start'])},{clk(min(pop['start'] + 1.6, dur))},Pop,"
-                  f"{{\\an5\\pos(540,{int(cap.get('pop_y', 1090))})\\fad(90,200)"
-                  f"\\t(0,140,\\fscx112\\fscy112)\\t(140,320,\\fscx100\\fscy100)}}{pop['text']}")
+                  f"{{\\an5\\pos(540,{y_cap})\\move(540,{y_cap + 14},540,{y_cap},0,80)"
+                  f"\\fad(30,60)}}{' '.join(parts)}")
 
     path.write_text(f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: {W}
-PlayResY: {H}
+PlayResX: {H_W}
+PlayResY: {H_H}
 WrapStyle: 0
 ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hook,DejaVu Sans,{fs_big},&H00FFFFFF,&H00101010,&H00000000,1,0,0,0,100,100,0,0,3,14,0,5,60,60,0,1
-Style: Who,DejaVu Sans,{hk.get('who_fontsize', 46)},&H0000E5FF,&H00101010,&H00000000,1,0,0,0,100,100,2,0,3,10,0,5,60,60,0,1
-Style: Bar,DejaVu Sans,10,&H0000E5FF,&H0000E5FF,&H0000E5FF,1,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
-Style: Pop,DejaVu Sans,{cap.get('pop_fontsize', 96)},&H0000E5FF,&H00101010,&H00000000,1,0,0,0,100,100,1,0,3,10,0,5,50,50,0,1
-Style: Cap,DejaVu Sans,{cap.get('fontsize', 74)},&H00FFFFFF,&H00101010,&H44000000,1,0,0,0,100,100,0,0,1,5,3,2,50,50,{cap.get('margin_v', 560)},1
+Style: Hook,Anton,{hook_px},&H00FFFFFF,&H00141010,&H00000000,0,0,0,0,100,100,1,0,1,6,3,5,60,60,0,1
+Style: Who,Inter,{kick_px},&H0000E5FF,&H00141010,&H00000000,-1,0,0,0,100,100,4,0,1,4,0,5,60,60,0,1
+Style: Bar,Anton,10,&H0000E5FF,&H0000E5FF,&H0000E5FF,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+Style: Cap,Archivo Black,{cap.get('fontsize', 64)},&H00FFFFFF,&H00101010,&H00000000,0,0,0,0,100,100,0,0,1,5,3,5,40,40,0,1
 [Events]
 Format: Layer, Start, End, Style, Text
 """ + "\n".join(ev) + "\n", encoding="utf8")
-    return {"events": len(ev), "groups": len(groups), "pop": pop,
-            "hook_box": hook_box, "face_box": face}
+    text_w = min(int(H_W * 0.88), int(len(big) * hook_px * 0.44))
+    return {"events": len(ev), "groups": len(groups), "pop": None,
+            "hook_box": {"y_top": int(min(y_big - line_h // 2, y_kick - kick_px // 2)),
+                         "y_bottom": int(rule_y + 10),
+                         "x0": int(540 - text_w // 2), "x1": int(540 + text_w // 2),
+                         "fontsize": hook_px, "who_shown": bool(who)},
+            "face_box": face}
 
 
 def main() -> int:
@@ -279,7 +284,7 @@ def main() -> int:
             fb = face_bottom_at(spec["start"])
             spec["y"] = int(min(1210, max(1000, (fb or 0.45) * 1920 + 30)))
         dest = store.path(cid, f"render/gfx/{clip}_c{i:02d}.mov")
-        cards.append(motion.render_card(dest, spec, fps=fps))
+        cards.append(motion.render_card(dest, spec, fps=fps, size=(1080, 470)))
     store.artifact(cid, f"graphics_{clip}", {"cards": cards,
                                              "source": "pinned" if pinned else "auto plan"})
     suppress = [(c["start"], c["end"]) for c in cards]
@@ -323,7 +328,8 @@ def main() -> int:
     fparts.append(f"[{last}]ass={ass.as_posix()},"
                   f"eq=contrast={grade.get('contrast', 1.07)}:saturation={grade.get('saturation', 1.12)}"
                   f":brightness={grade.get('brightness', 0.01)},"
-                  f"vignette=angle=PI/{grade.get('vignette', 7)},setsar=1[v]")
+                  f"vignette=angle=PI/{grade.get('vignette', 7)},"
+                 f"noise=alls={grade.get('grain', 3)}:allf=t+u,setsar=1[v]")
     fc = ";".join(fparts)
 
     out = store.path(cid, f"clips/{clip}.mp4")
