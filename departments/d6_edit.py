@@ -253,6 +253,30 @@ def main() -> int:
     store.artifact(cid, f"cropaudit_{cid_clip}", audit)
     if audit["moved"] or audit["split"] or audit["no_face"]:
         print(json.dumps({"crop_audit": audit}, indent=1), file=sys.stderr)
+    # ---- frame grid: a cut can only land on a source frame.
+    # Un-snapped cuts made every piece render one frame long, and the error adds
+    # up across nine pieces: the picture ended 0.4 s behind the audio, which is
+    # exactly the "video speed does not match audio" lag in the review.
+    grid = float(edit.get("source_fps", 24.0))
+
+    def snap(t: float) -> float:
+        return round(round(t * grid) / grid, 4)
+
+    for p in pieces:
+        p["src_in"], p["src_out"] = snap(p["src_in"]), snap(p["src_out"])
+    for a, b in zip(pieces, pieces[1:]):    # no gap, no overlap at a joint
+        b["src_in"] = a["src_out"]
+    total = round(sum(p["src_out"] - p["src_in"] for p in pieces), 4)
+    # the timeline length has to sit on the same grid, or the last cut cannot
+    # land on a frame and every piece re-rounds
+    want = round(round(float(plan["duration"]) * grid) / grid, 4)
+    if abs(total - want) > 0.0001:
+        # absorb the rounding on the last piece: a frame either way on the final
+        # cut is invisible, a drifted timeline is not
+        pieces[-1]["src_out"] = round(pieces[-1]["src_out"] + (want - total), 4)
+    total = round(sum(p["src_out"] - p["src_in"] for p in pieces), 4)
+    assert abs(total - want) < 1e-6, f"picture {total} != audio {want}"
+
     out_t = 0.0
     for p in pieces:                       # rebuilding can change the piece count
         p["out_in"] = round(out_t, 3)
@@ -306,6 +330,7 @@ def main() -> int:
     for i, p in enumerate(pieces):
         f = store.path(cid, f"work/{cid_clip}_v{i:02d}.mp4")
         dur_i = p["src_out"] - p["src_in"]
+        nf = int(round(dur_i * grid))       # exact frame count, never "about one more"
         if p.get("split"):
             half_w = (W - 5) // 2
             boxes = []
@@ -324,26 +349,39 @@ def main() -> int:
             fc = (f"[0:v]crop={lw}:{lh}:{lx}:{ly},scale={half_w}:{H}:flags=lanczos[l];"
                   f"[0:v]crop={rw_}:{rh}:{rx}:{ry},scale={half_w}:{H}:flags=lanczos[r];"
                   f"color=c=0xB4E600:s=5x{H}:d=1[lime];"
-                  f"[l][lime][r]hstack=inputs=3,setsar=1,fps={fps}[v]")
+                  f"[l][lime][r]hstack=inputs=3,setsar=1[v]")
             subprocess.run([FF, "-nostdin", "-v", "error", "-y",
-                            "-ss", f"{p['src_in']:.3f}", "-t", f"{dur_i:.3f}",
+                            "-ss", f"{p['src_in']:.6f}", "-t", f"{dur_i + .5:.6f}",
                             "-i", str(SRC), "-filter_complex", fc, "-map", "[v]", "-an",
-                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                            "-frames:v", str(nf), "-r", str(grid),
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "14",
                             "-pix_fmt", "yuv420p", str(f)], check=True)
         else:
-            vf = (f"{crop_expr(p)},scale={W}:{H}:flags=lanczos,setsar=1,fps={fps}")
+            vf = f"{crop_expr(p)},scale={W}:{H}:flags=lanczos,setsar=1"
             subprocess.run([FF, "-nostdin", "-v", "error", "-y",
-                            "-ss", f"{p['src_in']:.3f}", "-t", f"{dur_i:.3f}",
+                            "-ss", f"{p['src_in']:.6f}", "-t", f"{dur_i + .5:.6f}",
                             "-i", str(SRC), "-vf", vf, "-an",
-                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                            "-frames:v", str(nf), "-r", str(grid),
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "14",
                             "-pix_fmt", "yuv420p", str(f)], check=True)
+        got = round(nf / grid, 4)
+        if abs(got - dur_i) > 1e-3:
+            raise SystemExit(f"{p['src_in']}-{p['src_out']}: rendered {got}s, wanted {dur_i}s")
         parts.append(f)
 
     lst = store.path(cid, f"work/{cid_clip}_plist.txt")
     lst.write_text("".join(f"file '{x.as_posix()}'\n" for x in parts))
-    picture = store.path(cid, f"render/{cid_clip}_picture.mp4")
+    pic_src = store.path(cid, f"work/{cid_clip}_picture_{int(grid)}.mp4")
     subprocess.run([FF, "-nostdin", "-v", "error", "-y", "-f", "concat", "-safe", "0",
-                    "-i", str(lst), "-c", "copy", str(picture)], check=True)
+                    "-i", str(lst), "-c", "copy", str(pic_src)], check=True)
+    # one frame-rate conversion for the whole timeline, not one per piece: every
+    # 24->30 conversion rounds, and nine roundings is a visible drift
+    picture = store.path(cid, f"render/{cid_clip}_picture.mp4")
+    subprocess.run([FF, "-nostdin", "-v", "error", "-y", "-i", str(pic_src),
+                    "-vf", f"fps={fps}", "-t", f"{total:.6f}", "-an",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                    "-pix_fmt", "yuv420p", "-r", str(fps), str(picture)], check=True)
+    pic_dur = store.probe_duration(picture) if hasattr(store, "probe_duration") else total
 
     events = [{"event_id": f"v{i:02d}", "layer": "picture",
                "source_in": p["src_in"], "source_out": p["src_out"],

@@ -29,7 +29,7 @@ ASSETS = Path(__file__).resolve().parent.parent / "assets"
 LIME = (198, 255, 0)
 WHITE = (255, 255, 255)
 INK = (8, 10, 13)
-GREY = (176, 186, 198)
+GREY = (184, 194, 206)
 MARGIN = 46
 
 
@@ -105,8 +105,6 @@ def band(w: int, h: int, from_bottom: float = 0.55, top_alpha: int = 0,
         a = int(top_alpha + (bottom_alpha - top_alpha) * (f ** 1.6))
         for x in range(w):
             px[x, y] = (6, 8, 11, a)
-    d = ImageDraw.Draw(im)
-    d.rectangle([MARGIN, int(h * 0.10), MARGIN + 92, int(h * 0.10) + 8], fill=LIME + (255,))
     return im
 
 
@@ -153,91 +151,81 @@ def kicker(d, xy, s, colour=LIME, size=30):
     glyph(d, xy, s.upper(), ui(size), fill=colour + (255,), anchor="lm", tracking=6)
 
 
-def money_note(w: int, h: int, t: float) -> Image.Image:
-    """A banknote with a proper isometric tilt and engraved detail."""
-    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+# ------------------------------------------------------------------ card bodies
+# What the second cut changed, and why
+# ------------------------------------
+# The first graphics pass still read as machine output. Three tells, all of them
+# software habits rather than editing habits:
+#
+#   * an icon next to every card (chip, globe, dotted 400-grid, a cartoon
+#     banknote) — nothing a podcast editor would cut in;
+#   * numbers that count up from zero, so "$10,000" was on screen as "$1,812"
+#     for half a second — that is a motion-graphics template, and it can even
+#     read as a false claim;
+#   * one recipe for every card: kicker + value + underline, on the same beat.
+#
+# Human editors type on. Type wipes in from its own left edge in about 120 ms,
+# sits still, and is cut off. Numbers appear whole. Emphasis is one marker swipe
+# behind one word, angled slightly differently every time. No icons at all.
+
+def _tlayer(size, xy, text, font, fill, anchor="lm", tracking=0.0):
+    im = Image.new("RGBA", size, (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    k = ease_out_cubic(min(1.0, t / 0.5))
-    tilt = 0.13 * (1 - k)
-    cx, cy = w / 2, h / 2
-    bw, bh = w * 0.74, h * 0.50
-
-    def quad(scale, dy):
-        half_w = bw * scale / 2
-        half_h = bh * scale / 2
-        return [(cx - half_w + tilt * 26, cy - half_h + dy),
-                (cx + half_w + tilt * 26, cy - half_h + dy + tilt * 30),
-                (cx + half_w - tilt * 18, cy + half_h + dy + tilt * 8),
-                (cx - half_w - tilt * 18, cy + half_h + dy - tilt * 16)]
-
-    for i, (scale, dy) in enumerate([(0.88, 30), (0.94, 15), (1.0, 0)]):
-        col = (24 + i * 6, 62 + i * 12, 40 + i * 10, 255) if i < 2 else (30, 118, 70, 255)
-        d.polygon(quad(scale, dy), fill=col, outline=(150, 220, 175, 90))
-    pts = quad(1.0, 0)
-    d.polygon(pts, fill=(36, 140, 82, 255), outline=(196, 245, 210, 180))
-    cx2 = sum(p[0] for p in pts) / 4
-    cy2 = sum(p[1] for p in pts) / 4
-    r = bh * 0.26
-    d.ellipse([cx2 - r, cy2 - r * 0.92, cx2 + r, cy2 + r * 0.92],
-              outline=(210, 250, 220, 210), width=4)
-    d.text((cx2, cy2 + 1), "$", font=display(int(bh * 0.42)), fill=(225, 250, 232, 235),
-           anchor="mm")
+    glyph(d, xy, text, font, fill=fill, anchor=anchor, tracking=tracking)
     return im
 
 
-def icon_chip(im, box, t):
-    d = ImageDraw.Draw(im)
+def _wipe_mask(w: int, h: int, x: float, soft: int = 18) -> Image.Image:
+    a = np.clip((x - np.arange(w)) / max(1, soft), 0.0, 1.0) * 255.0
+    return Image.fromarray(np.tile(a.astype(np.uint8), (h, 1)), "L")
+
+
+def _revealed(layer: Image.Image, p: float, soft: int = 18):
+    """Type-on: the layer is uncovered from its own left edge."""
+    if p <= 0:
+        return None
+    if p >= 1:
+        return layer
+    w, h = layer.size
+    mask = _wipe_mask(w, h, w * ease_out_cubic(p) + 1, soft)
+    out = layer.copy()
+    out.putalpha(Image.composite(out.getchannel("A"), Image.new("L", (w, h), 0), mask))
+    return out
+
+
+def _shadowed(im: Image.Image, blur: int = 9, alpha: int = 170) -> Image.Image:
+    """Drop shadow instead of a black box: the type sits in the picture."""
+    a = im.getchannel("A")
+    sh = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    sh.putalpha(a.filter(ImageFilter.GaussianBlur(blur)).point(lambda v: int(v * alpha / 255)))
+    out = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    out.alpha_composite(sh, (0, 3))
+    out.alpha_composite(im)
+    return out
+
+
+def _marker(im, box, p: float, seed: int = 0):
+    """A highlighter stroke behind one word: rough edges, slightly off level."""
+    if p <= 0:
+        return
+    w, h = im.size
     x0, y0, x1, y1 = box
-    s = min(x1 - x0, y1 - y0)
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    r = s * 0.26
-    k = ease_out_cubic(min(1.0, t / 0.45))
-    r *= 0.85 + 0.15 * k
-    d.rounded_rectangle([cx - r, cy - r, cx + r, cy + r], radius=r * 0.26,
-                        outline=LIME + (245,), width=5)
-    d.rounded_rectangle([cx - r * 0.40, cy - r * 0.40, cx + r * 0.40, cy + r * 0.40],
-                        radius=r * 0.16, fill=LIME + (210,))
-    for f in (-0.45, 0.0, 0.45):
-        for sgn in (-1, 1):
-            d.line([cx + f * r, cy + sgn * r * 1.02, cx + f * r, cy + sgn * r * 1.40],
-                   fill=LIME + (220,), width=4)
-            d.line([cx + sgn * r * 1.02, cy + f * r, cx + sgn * r * 1.40, cy + f * r],
-                   fill=LIME + (220,), width=4)
+    rng = np.random.default_rng(seed)
+    lay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(lay)
+    n = 7
+    top = [(x0 + (x1 - x0) * i / n, y0 + rng.uniform(-3, 3)) for i in range(n + 1)]
+    bot = [(x0 + (x1 - x0) * (n - i) / n, y1 + rng.uniform(-4, 4)) for i in range(n + 1)]
+    d.polygon(top + bot, fill=LIME + (210,))
+    d.polygon([(x0 - 6, y0 + 2), (x0 + 24, y0 - 2), (x0 + 20, y1), (x0 - 8, y1 - 3)],
+              fill=LIME + (180,))
+    reveal = _revealed(lay, p, soft=34)
+    if reveal is not None:
+        im.alpha_composite(reveal)
 
 
-def icon_globe(im, box, t):
-    d = ImageDraw.Draw(im)
-    x0, y0, x1, y1 = box
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    r = (x1 - x0) / 2 * (0.86 + 0.14 * ease_out_cubic(min(1.0, t / 0.45)))
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=LIME + (240,), width=5)
-    d.ellipse([cx - r * 0.44, cy - r, cx + r * 0.44, cy + r], outline=LIME + (150,), width=3)
-    d.line([cx - r, cy, cx + r, cy], fill=LIME + (150,), width=3)
-    d.arc([cx - r, cy - r * 0.92, cx + r, cy + r * 0.92], 200, 340, fill=LIME + (130,), width=3)
-    d.arc([cx - r, cy - r * 0.92, cx + r, cy + r * 0.92], 20, 160, fill=LIME + (130,), width=3)
-
-
-# ------------------------------------------------------------------ card bodies
-def _layout(w: int, h: int, kicker_text: str, value: str, unit: str, sub: str,
-            value_px: int = 120, unit_px: int = 38, sub_px: int = 29):
-    """Draw the shared hierarchy: kicker / value + unit / rule / sub."""
-    im = scrim(w, h)
-    d = ImageDraw.Draw(im)
-    if kicker_text:
-        kicker(d, (MARGIN + 16, 54), kicker_text)
-    f = display(value_px)
-    while value_px > 56 and d.textlength(value, font=f) > w * 0.80:
-        value_px -= 4
-        f = display(value_px)
-    vy = int(h * 0.50)
-    d.text((MARGIN, vy), value, font=f, fill=WHITE + (255,), anchor="lm")
-    vw = d.textlength(value, font=f)
-    if unit:
-        d.text((MARGIN + vw + 14, vy + value_px * 0.20), unit, font=ui(unit_px),
-               fill=LIME + (255,), anchor="lm")
-    if sub:
-        d.text((MARGIN, h - 52), sub, font=ui(sub_px), fill=GREY + (255,), anchor="lm")
-    return im, d, vy + value_px * 0.42, vw
+def _block(d, x, y, lines, sizes, gap=None):
+    pass
 
 
 def fmt(v: float, currency: bool = True) -> str:
@@ -245,153 +233,166 @@ def fmt(v: float, currency: bool = True) -> str:
     return ("$" + s) if currency else s
 
 
-def card_counter(dur, w, h, *, label, value, unit, currency=True, accent_note=""):
+def _value_card(dur, w, h, *, label, value_s, unit, note, value_px, swipe_word=None,
+                seed=0):
+    """Shared skeleton: label, one big number, unit, one line of context."""
     def frame(t):
-        k = ease_out_expo(min(1.0, t / max(0.55, dur * 0.38)))
-        im = band(w, h)
-        d = ImageDraw.Draw(im)
+        vpx = value_px
+        im = band(w, h, top_alpha=0, bottom_alpha=178)
+        # accent tick, left of the number — an editor's mark, not an icon
+        tick_p = min(1.0, max(0.0, (t - 0.02) / 0.16))
+        if tick_p > 0:
+            d = ImageDraw.Draw(im)
+            th = int(vpx * 0.58 * ease_out_expo(tick_p))
+            d.rectangle([MARGIN, int(h * 0.60) - th // 2, MARGIN + 8,
+                         int(h * 0.60) + th // 2], fill=LIME + (255,))
         if label:
-            kicker(d, (MARGIN, int(h * 0.36)), label)
-        value_s = fmt(value * k, currency)
-        px = 132
-        f = display(px)
-        while px > 64 and d.textlength(value_s, font=f) > w * 0.74:
-            px -= 4
-            f = display(px)
-        d.text((MARGIN, int(h * 0.66)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
-        vw = d.textlength(value_s, font=f)
+            lay = _tlayer((w, h), (MARGIN + 40, int(h * 0.19)), label.upper(),
+                          ui(30), WHITE + (238,), tracking=7)
+            r = _revealed(lay, (t - 0.00) / 0.14)
+            if r is not None:
+                im.alpha_composite(_shadowed(r, 8, 215))
+        f = display(vpx)
+        while vpx > 54 and d_length(im.size, value_s, f) > w * 0.78:
+            vpx -= 4
+            f = display(vpx)
+        lay = _tlayer((w, h), (MARGIN + 40, int(h * 0.60)), value_s, f, WHITE + (255,),
+                      anchor="ls")
+        r = _revealed(lay, (t - 0.05) / 0.16, soft=14)
+        if r is not None:
+            im.alpha_composite(_shadowed(r, 10, 185))
         if unit:
-            d.text((MARGIN + vw + 16, int(h * 0.66) + px * 0.18), unit, font=ui(36),
-                   fill=LIME + (255,), anchor="lm")
-        if accent_note:
-            d.text((MARGIN, h - 46), accent_note, font=ui(29), fill=(205, 212, 220, 255),
-                   anchor="lm")
-        draw_underline(d, MARGIN, int(h * 0.66 + px * 0.52), int(w * 0.26),
-                       ease_inout_cubic(min(1.0, t / 0.7)))
-        return grain(im, 3.0, seed=int(t * 30) % 97)
+            vw = _measure(value_s, f)
+            ul = _tlayer((w, h), (MARGIN + 40 + vw + 16, int(h * 0.60) - 6), unit,
+                         ui(38), LIME + (255,))
+            r = _revealed(ul, (t - 0.17) / 0.14)
+            if r is not None:
+                im.alpha_composite(_shadowed(r, 7, 160))
+        if note:
+            nl = _tlayer((w, h), (MARGIN + 40, int(h * 0.82)), note, ui(30),
+                         (206, 213, 221, 255))
+            r = _revealed(nl, (t - 0.26) / 0.16)
+            if r is not None:
+                im.alpha_composite(_shadowed(r, 7, 150))
+        return grain(im, 2.4, seed=int(t * 30) % 97)
     return frame
+
+
+def d_length(size, text, font):
+    tmp = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    return tmp.textlength(text, font=font)
+
+
+def _measure(text, font):
+    return ImageDraw.Draw(Image.new("RGB", (8, 8))).textlength(text, font=font)
+
+
+def card_counter(dur, w, h, *, label, value, unit, currency=True, accent_note=""):
+    return _value_card(dur, w, h, label=label, value_s=fmt(value, currency), unit=unit,
+                       note=accent_note, value_px=150)
 
 
 def card_cost(dur, w, h, *, value, label, sub):
-    def frame(t):
-        k = ease_out_expo(min(1.0, t / max(0.5, dur * 0.34)))
-        im = band(w, h)
-        d = ImageDraw.Draw(im)
-        kicker(d, (MARGIN, int(h * 0.36)), label)
-        value_s = fmt(value * k)
-        px = 126
-        f = display(px)
-        while px > 60 and d.textlength(value_s, font=f) > w * 0.52:
-            px -= 4
-            f = display(px)
-        d.text((MARGIN, int(h * 0.68)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
-        vw = d.textlength(value_s, font=f)
-        d.text((MARGIN + vw + 14, int(h * 0.68) + px * 0.18), "/mo", font=ui(36),
-               fill=LIME + (255,), anchor="lm")
-        if sub:
-            d.text((MARGIN, h - 46), sub, font=ui(29), fill=(205, 212, 220, 255), anchor="lm")
-        draw_underline(d, MARGIN, int(h * 0.68 + px * 0.52), int(w * 0.22),
-                       ease_inout_cubic(min(1.0, t / 0.7)))
-        note = money_note(int(w * 0.22), int(h * 0.62), t)
-        im.alpha_composite(note, (int(w * 0.72), int(h * 0.22)))
-        return grain(im, 3.0, seed=int(t * 30) % 97)
-    return frame
+    return _value_card(dur, w, h, label=label, value_s=fmt(value), unit="/mo",
+                       note=sub, value_px=150)
 
 
 def card_people(dur, w, h, *, total, label, sub):
-    def frame(t):
-        k = ease_inout_cubic(min(1.0, t / max(0.8, dur * 0.55)))
-        im = band(w, h)
-        d = ImageDraw.Draw(im)
-        kicker(d, (MARGIN, int(h * 0.36)), label)
-        value_s = str(int(total * k))
-        f = display(124)
-        d.text((MARGIN, int(h * 0.68)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
-        vw = d.textlength(value_s, font=f)
-        d.text((MARGIN + vw + 14, int(h * 0.68) + 22), "people", font=ui(36),
-               fill=LIME + (255,), anchor="lm")
-        if sub:
-            d.text((MARGIN, h - 46), sub, font=ui(29), fill=(205, 212, 220, 255), anchor="lm")
-        draw_underline(d, MARGIN, int(h * 0.68 + 64), int(w * 0.22),
-                       ease_inout_cubic(min(1.0, t / 0.7)))
-        gw, gh = int(w * 0.26), int(h * 0.50)
-        g = Image.new("RGBA", (gw, gh), (0, 0, 0, 0))
-        gd = ImageDraw.Draw(g)
-        cols, rows, pad = 20, 20, 3
-        cw = (gw - pad * (cols + 1)) / cols
-        ch = (gh - pad * (rows + 1)) / rows
-        r = min(cw, ch) * 0.34
-        shown = int(400 * k)
-        for i in range(400):
-            c, rr = i % cols, i // cols
-            cx = pad + c * (cw + pad) + cw / 2
-            cy = pad + rr * (ch + pad) + ch / 2
-            if i < shown:
-                gd.ellipse([cx - r, cy - r, cx + r, cy + r], fill=LIME + (230,))
-            else:
-                gd.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255, 26))
-        im.alpha_composite(g, (int(w * 0.70), int(h * 0.22)))
-        return grain(im, 3.0, seed=int(t * 30) % 97)
-    return frame
+    return _value_card(dur, w, h, label=label, value_s=str(int(total)), unit="people",
+                       note=sub, value_px=150)
 
 
 def card_math(dur, w, h, *, left, right, result, label):
+    """Two facts and the answer, typing on one beat at a time."""
     def frame(t):
-        im = band(w, h)
-        d = ImageDraw.Draw(im)
-        kicker(d, (MARGIN, int(h * 0.36)), label)
-        parts = [(left, display(62), WHITE), ("÷", display(52), GREY),
-                 (right, display(62), WHITE), ("=", display(52), GREY),
-                 (result, display(78), LIME)]
+        im = band(w, h, top_alpha=0, bottom_alpha=120)
+        if label:
+            lay = _tlayer((w, h), (MARGIN, int(h * 0.22)), label.upper(), ui(30),
+                          WHITE + (238,), tracking=7)
+            r = _revealed(lay, t / 0.14)
+            if r is not None:
+                im.alpha_composite(_shadowed(r, 8, 215))
+        y = int(h * 0.66)
         x = MARGIN
-        base_y = int(h * 0.64)
-        for i, (p, f, col) in enumerate(parts):
-            appear = ease_out_expo(min(1.0, max(0.0, (t - 0.10 * i) / 0.28)))
-            if appear <= 0:
-                break
-            d.text((x, base_y + int((1 - appear) * 20)), p, font=f,
-                   fill=col + (int(255 * appear),), anchor="lm")
-            x += d.textlength(p, font=f) + 16
-        d.text((MARGIN, h - 46), "per person, per month", font=ui(29),
-               fill=(205, 212, 220, 255), anchor="lm")
-        draw_underline(d, MARGIN, int(base_y + 58), int(w * 0.34),
-                       ease_inout_cubic(min(1.0, max(0.0, (t - 0.45) / 0.6))))
-        return grain(im, 3.0, seed=int(t * 30) % 97)
+        seq = [(left, display(72), WHITE, 0.00), ("÷", grotesk(70), GREY, 0.10),
+               (right, display(72), WHITE, 0.16), ("=", grotesk(70), GREY, 0.26),
+               (result, display(92), LIME, 0.32)]
+        for text, f, col, at in seq:
+            r = _revealed(_tlayer((w, h), (x, y), text, f, col + (255,), anchor="ls"),
+                          (t - at) / 0.13, soft=12)
+            if r is not None:
+                im.alpha_composite(_shadowed(r, 9, 175))
+            x += _measure(text, f) + 18
+        nl = _tlayer((w, h), (MARGIN, int(h * 0.90)), "per person, per month", ui(30),
+                     (206, 213, 221, 255))
+        r = _revealed(nl, (t - 0.5) / 0.16)
+        if r is not None:
+            im.alpha_composite(_shadowed(r, 7, 150))
+        return grain(im, 2.4, seed=int(t * 30) % 97)
     return frame
 
 
-def card_chip(dur, w, h, *, label, sub, icon="ai"):
+def card_chip(dur, w, h, *, label, sub, icon=None):
+    """A question with its second half landing a beat later. No icon: the type
+    is the graphic, which is what the reference edit does."""
     def frame(t):
-        im = band(w, h, top_alpha=0, bottom_alpha=190)
-        d = ImageDraw.Draw(im)
-        (icon_chip if icon == "ai" else icon_globe)(
-            im, (int(w * 0.72), int(h * 0.18), int(w * 0.95), int(h * 0.78)), t)
-        f = display(66)
-        while f.size > 40 and d.textlength(label, font=f) > w * 0.54:
-            f = display(f.size - 3)
-        d.text((MARGIN, int(h * 0.60)), label, font=f, fill=WHITE + (255,), anchor="lm")
-        d.text((MARGIN, int(h * 0.80)), sub, font=ui(34), fill=LIME + (245,), anchor="lm")
-        draw_underline(d, MARGIN, int(h * 0.88), int(w * 0.22),
-                       ease_inout_cubic(min(1.0, t / 0.6)))
-        return grain(im, 3.0, seed=int(t * 30) % 97)
+        im = band(w, h, top_alpha=0, bottom_alpha=110)
+        f = grotesk(64)
+        while f.size > 38 and d_length(im.size, label, f) > w * 0.84:
+            f = grotesk(f.size - 3)
+        lay = _tlayer((w, h), (MARGIN, int(h * 0.52)), label, f, WHITE + (255,), anchor="ls")
+        r = _revealed(lay, t / 0.15, soft=14)
+        if r is not None:
+            im.alpha_composite(_shadowed(r, 10, 185))
+        if sub:
+            fs = grotesk(52)
+            while fs.size > 32 and d_length(im.size, sub, fs) > w * 0.84:
+                fs = grotesk(fs.size - 3)
+            sw_w = _measure(sub, fs)
+            _marker(im, (MARGIN - 8, int(h * 0.74) - 46, MARGIN + sw_w + 8, int(h * 0.74)),
+                    (t - 0.22) / 0.18, seed=len(sub))
+            lay = _tlayer((w, h), (MARGIN, int(h * 0.74)), sub, fs, INK + (255,), anchor="ls")
+            r = _revealed(lay, (t - 0.22) / 0.16, soft=14)
+            if r is not None:
+                im.alpha_composite(r)
+        return grain(im, 2.4, seed=int(t * 30) % 97)
     return frame
 
 
 def card_quote(dur, w, h, *, text_line, who):
+    """One line, one marked word, attribution underneath."""
     def frame(t):
-        im = band(w, h, top_alpha=0, bottom_alpha=200)
-        d = ImageDraw.Draw(im)
-        k = ease_out_expo(min(1.0, t / 0.4))
-        f = grotesk(48)
-        while f.size > 26 and d.textlength(text_line, font=f) > w * 0.82:
+        im = band(w, h, top_alpha=0, bottom_alpha=130)
+        words = text_line.split()
+        f = grotesk(54)
+        while f.size > 30 and d_length(im.size, text_line, f) > w * 0.86:
             f = grotesk(f.size - 2)
-        d.text((MARGIN, int(h * 0.58)), text_line, font=f,
-               fill=WHITE + (int(255 * k),), anchor="lm")
-        d.line([MARGIN, int(h * 0.72), MARGIN + int(34 * k), int(h * 0.72)],
-               fill=LIME + (255,), width=5)
-        d.text((MARGIN + 50, int(h * 0.72)), who.upper(), font=ui(26), fill=(205, 212, 220, 255),
-               anchor="lm")
-        return grain(im, 3.0, seed=int(t * 30) % 97)
+        mark_n = min(3, max(1, len(words) // 2))
+        pre = " ".join(words[:-mark_n])
+        mark = " ".join(words[-mark_n:])
+        base = int(h * 0.50)
+        pick = display(f.size + 2)          # the marked words in the display face
+        x_pre = MARGIN + (_measure(pre + " ", grotesk(f.size)) if pre else 0)
+        lay = _tlayer((w, h), (MARGIN, base), pre or " ", grotesk(f.size),
+                      WHITE + (255,), anchor="ls")
+        r = _revealed(lay, t / 0.16, soft=14)
+        if r is not None:
+            im.alpha_composite(_shadowed(r, 10, 180))
+        mw = _measure(mark, pick)
+        _marker(im, (x_pre - 8, base - int(pick.size * 0.94), x_pre + mw + 12, base + 6),
+                (t - 0.18) / 0.16, seed=len(text_line))
+        lay = _tlayer((w, h), (x_pre, base), mark, pick, INK + (255,), anchor="ls")
+        r = _revealed(lay, (t - 0.16) / 0.15, soft=12)
+        if r is not None:
+            im.alpha_composite(r)
+        if who:
+            d = _measure("—  ", ui(28))
+            lay = _tlayer((w, h), (MARGIN, int(h * 0.70)), who.upper(), ui(28),
+                          (208, 215, 223, 255), tracking=5)
+            r = _revealed(lay, (t - 0.24) / 0.16)
+            if r is not None:
+                im.alpha_composite(_shadowed(r, 6, 150))
+        return grain(im, 2.4, seed=int(t * 30) % 97)
     return frame
 
 

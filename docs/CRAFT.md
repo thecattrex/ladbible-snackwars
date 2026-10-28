@@ -76,3 +76,31 @@ After watching a reference short the client supplied (multi-cam podcast clip):
 - **A still image input to ffmpeg must be looped** (`-loop 1 -framerate <fps>`).
   A one-frame stream composited with `overlay` silently stops appearing after
   ~12 s, which took the watermark off the back half of a render.
+
+## Third pass — sync and the "still looks AI" tell
+
+**Sound and picture must be cut on the same frame.**
+- Every cut is snapped to the source frame grid before anything renders
+  (`source_fps`, 24 here). Off-grid cuts made every piece render one frame long,
+  and nine pieces stacked 0.4 s of picture lag against the audio — heard as a
+  clip that drags behind the voice, worst at the end.
+- Each piece renders an exact frame count (`-frames:v N`), the pieces are
+  concatenated at the source rate, and the 24 → 30 conversion happens **once**
+  on the finished timeline. Converting per piece rounds per piece.
+- Audio is cut from the same EDL with `atrim` on the same boundaries, so it is
+  sample-locked to the picture by construction, not by eye.
+
+**Type, not icons.**
+- No icon sets, no dotted grids, no illustrated banknotes, no neon chips. The
+  graphics are type + the footage, which is what a podcast editor cuts.
+- Numbers appear whole on a cut. Counting up from zero looks like a template and
+  can flash a wrong number on screen (`$1,812` on the way to `$10,000`).
+- Type **wipes on** from its own left edge in ~120–160 ms, sits still, and is cut
+  off. Fades and rise-ins are the software look.
+- One marker swipe per card, behind the operative words only, dark text on the
+  lime, edges slightly rough and angled a few degrees. Never underline the whole
+  line.
+- Labels are white small caps with a drop shadow, not lime: lime on a grey suit
+  disappears. Lime stays for the accent tick, the unit, and the swipe.
+- Layout varies by card kind (value / statement / question / equation). One
+  skeleton repeated seven times reads as a template regardless of the typeface.
