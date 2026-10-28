@@ -29,7 +29,7 @@ import imageio_ffmpeg
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from orchestrator import store, timeline  # noqa: E402
+from orchestrator import store, timeline, graphics, motion  # noqa: E402
 
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 W, H = 1080, 1920
@@ -118,7 +118,7 @@ def number_pop(groups, brand, dur):
     return best
 
 
-def build_ass(path: Path, words, dur: float, hook: dict, brief: dict):
+def build_ass(path: Path, words, dur: float, hook: dict, brief: dict, suppress=()):
     cap = brief.get("captions", {})
     hk = brief.get("hook_card", {})
     brand = cap.get("brand_colour_ass", "&H0000E5FF")   # lime in ASS BGR
@@ -173,7 +173,11 @@ def build_ass(path: Path, words, dur: float, hook: dict, brief: dict):
                 "x0": int(540 - text_w // 2), "x1": int(540 + text_w // 2),
                 "fontsize": fs_big, "who_shown": bool(who)}
 
+    def held(a, b):
+        return any(b > s0 + 0.02 and a < s1 - 0.02 for s0, s1 in suppress)
+
     groups = merge_short([g for g in group_words([w for w in words if w["t"] < dur], maxw) if g])
+    groups = [g for g in groups if not held(g[0]["t"], g[-1]["e"])]
     for gi, g in enumerate(groups):
         start = max(0.0, g[0]["t"])
         nxt = groups[gi + 1][0]["t"] if gi + 1 < len(groups) else dur
@@ -191,7 +195,7 @@ def build_ass(path: Path, words, dur: float, hook: dict, brief: dict):
                   f"{{\\fad(50,50)}}{' '.join(parts)}")
 
     pop = number_pop(groups, brand, dur)
-    if pop and pop["start"] > hook_secs + 0.8:
+    if pop and pop["start"] > hook_secs + 0.8 and not held(pop["start"], pop["end"]):
         ev.append(f"Dialogue: 3,{clk(pop['start'])},{clk(min(pop['start'] + 1.6, dur))},Pop,"
                   f"{{\\an5\\pos(540,{int(cap.get('pop_y', 1090))})\\fad(90,200)"
                   f"\\t(0,140,\\fscx112\\fscy112)\\t(140,320,\\fscx100\\fscy100)}}{pop['text']}")
@@ -253,10 +257,37 @@ def main() -> int:
     plan = store.read_json(cid, f"artifacts/cutplan_{clip}.v1.json")["payload"]
     words = timeline.remap_words(plan, words)
 
+    # ---- graphics layer: cards that explain the line, placed clear of his face
+    pinned = (store.read_json(cid, "graphics_plan.json", {}) or {}).get(clip)
+    specs = graphics.plan(words, dur, brief, overrides=pinned)
+
+    def face_bottom_at(t):
+        for e in edl["events"]:
+            if e["output_in"] <= t < e["output_out"] + 0.05:
+                sp = next((sh["speaker"] for sh in fr["shots"]
+                           if sh.get("speaker") and sh["t0"] <= e["source_in"] + 0.05 < sh["t1"]),
+                          None)
+                if not sp:
+                    return None
+                return sp["cy"] + sp["w"] * 16 / 9 / 2 * 0.62
+        return None
+
+    cards = []
+    for i, spec in enumerate(specs):
+        spec = dict(spec)
+        if "y" not in spec:
+            fb = face_bottom_at(spec["start"])
+            spec["y"] = int(min(1210, max(1000, (fb or 0.45) * 1920 + 30)))
+        dest = store.path(cid, f"render/gfx/{clip}_c{i:02d}.mov")
+        cards.append(motion.render_card(dest, spec, fps=fps))
+    store.artifact(cid, f"graphics_{clip}", {"cards": cards,
+                                             "source": "pinned" if pinned else "auto plan"})
+    suppress = [(c["start"], c["end"]) for c in cards]
+
     picture = store.path(cid, f"render/{clip}_picture.mp4")
     audio = store.path(cid, f"render/{clip}_audio.m4a")
     ass = store.path(cid, f"work/{clip}.ass")
-    info = build_ass(ass, words, dur, hook, brief)
+    info = build_ass(ass, words, dur, hook, brief, suppress)
     store.artifact(cid, f"captions_{clip}", {
         "clip": clip, "style": "1-3 word groups, brand-colour keyword pop",
         "words_on_output_clock": len(words), **{k: v for k, v in info.items() if k != "pop"},
@@ -280,16 +311,25 @@ def main() -> int:
             "bottom-right": f"W-w-{int(wmc.get('margin_side', 50))}"}.get(pos, "(W-w)/2")
 
     grade = brief.get("grade", {})
-    fc = (f"[2:v]scale={wm_w}:-1[wm];"
-          f"[0:v][wm]overlay={wm_x}:{wm_y}:format=auto[v0];"
-          f"[v0]ass={ass.as_posix()},"
-          f"eq=contrast={grade.get('contrast', 1.07)}:saturation={grade.get('saturation', 1.12)}"
-          f":brightness={grade.get('brightness', 0.01)},"
-          f"vignette=angle=PI/{grade.get('vignette', 7)},setsar=1[v]")
+    fparts = [f"[2:v]scale={wm_w}:-2[wm]", f"[0:v][wm]overlay={wm_x}:{wm_y}:format=auto[v0]"]
+    last = "v0"
+    for i, c in enumerate(cards):
+        idx = i + 3
+        fparts.append(f"[{idx}:v]setpts=PTS+{c['start']}/TB[g{i}]")
+        fparts.append(f"[{last}][g{i}]overlay=x={c['x']}:y={c['y']}"
+                      f":enable='between(t,{c['start']},{c['end']})'"
+                      f":format=auto:eof_action=pass[v{i + 1}]")
+        last = f"v{i + 1}"
+    fparts.append(f"[{last}]ass={ass.as_posix()},"
+                  f"eq=contrast={grade.get('contrast', 1.07)}:saturation={grade.get('saturation', 1.12)}"
+                  f":brightness={grade.get('brightness', 0.01)},"
+                  f"vignette=angle=PI/{grade.get('vignette', 7)},setsar=1[v]")
+    fc = ";".join(fparts)
 
     out = store.path(cid, f"clips/{clip}.mp4")
     subprocess.run([FF, "-nostdin", "-v", "error", "-y",
                     "-i", str(picture), "-i", str(audio), "-i", str(wm),
+                    *[x for c in cards for x in ("-i", c["path"])],
                     "-filter_complex", fc,
                     "-map", "[v]", "-map", "1:a", "-t", f"{dur:.3f}",
                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
@@ -299,6 +339,8 @@ def main() -> int:
     store.gate(cid, clip, "RENDER_COMPLETE", out.exists() and out.stat().st_size > 0, str(out))
     print(json.dumps({"clip": clip, "output": str(out), "duration": dur,
                       "caption_groups": info["groups"], "hook": hook,
+                      "graphics": [{"kind": c["kind"], "start": c["start"],
+                                    "end": c["end"], "y": c["y"]} for c in cards],
                       "number_pop": info["pop"],
                       "size_mb": round(out.stat().st_size / 1e6, 1)}, indent=1))
     return 0
