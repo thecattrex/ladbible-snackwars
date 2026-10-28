@@ -76,13 +76,16 @@ def loudness(p: Path) -> dict:
     return {"I": None, "TP": None}
 
 
-def visual(p: Path, wm_band=(.03, .16)) -> dict:
+def visual(p: Path, wm_band=(.03, .16), area=(0.0, 1.0)) -> dict:
     import cv2
     from orchestrator import framing as framing_mod
-    w, h = 216, 384
+    w, h = 432, 768
+    aw, ah = 1080, 1920
+    y0c, y1c = int(area[0] * ah), int(area[1] * ah)
     raw = subprocess.run([FF, "-v", "error", "-i", str(p), "-an", "-vf",
-                          f"fps=4,scale={w}:{h}", "-f", "rawvideo",
-                          "-pix_fmt", "bgr24", "-"], capture_output=True).stdout
+                          f"crop={aw}:{y1c - y0c}:0:{y0c},fps=4,scale={w}:{h}",
+                          "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+                         capture_output=True).stdout
     n = len(raw) // (w * h * 3)
     if not n:
         return {"faces": 0.0, "watermark": 0.0, "black_frames": 1.0,
@@ -189,7 +192,13 @@ def main() -> int:
     else:
         y0 = 1920 - int(wmc.get("margin_bottom", 300)) - wm_h
         band = (y0 / 1920, min(1.0, (y0 + wm_h) / 1920))
-    info, loud, vis, fid = probe(out), loudness(out), visual(out, band), fidelity(clip, cid)
+    bands_art = store.read_json(cid, f"artifacts/bands_{clip}.v1.json") or {}
+    bp = bands_art.get("payload") or {}
+    if bp.get("top_h"):
+        area = (bp["top_h"] / 1920, (bp["top_h"] + bp["video_h"]) / 1920)
+    else:
+        area = (0.0, 1.0)
+    info, loud, vis, fid = probe(out), loudness(out), visual(out, band, area), fidelity(clip, cid)
     integ = integrity(out)
     at = brief.get("audio_targets", {})
     checks = {

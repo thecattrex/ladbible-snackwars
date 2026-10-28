@@ -169,7 +169,8 @@ def analyse(src: Path, t0: float, t1: float, fps: float = 4.0) -> dict:
 
 
 def crop_for(shot: dict, full_w: int, full_h: int, punch: float = 1.0,
-             target_face_frac: float = 0.30, anchor: float = 0.40) -> dict:
+             target_face_frac: float = 0.30, anchor: float = 0.40,
+             aspect: float = 9 / 16) -> dict:
     """Map a shot's speaker position onto a 9:16 crop of the full frame.
 
     The crop width is chosen so the speaker's face lands at roughly
@@ -186,7 +187,7 @@ def crop_for(shot: dict, full_w: int, full_h: int, punch: float = 1.0,
     crop_w = face_px / max(0.10, target_face_frac)
     crop_w = crop_w * punch
     crop_w = max(760.0, min(full_w, crop_w))
-    crop_h = crop_w * 16 / 9
+    crop_h = crop_w / aspect
     if crop_h > full_h:
         crop_h = full_h
         crop_w = crop_h * 9 / 16

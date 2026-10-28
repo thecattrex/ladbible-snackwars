@@ -28,7 +28,7 @@ import os
 from pathlib import Path
 MEDIA = Path(os.environ.get("MEDIA_ROOT", "/var/tmp"))
 SRC = MEDIA / "src.mp4"
-W, H = 1080, 1920
+W, H = 1080, 1120   # picture area between the title bands (D8 stacks the bands)
 cv2.setNumThreads(2)
 
 
@@ -197,6 +197,38 @@ def main() -> int:
         raise SystemExit(f"picture {total_pic}s != audio {plan['duration']}s — refusing to "
                          f"render a clip whose layers disagree")
 
+    # --- split frame: the moment both people are talking at once, the reference
+    # edit puts them side by side with a divider instead of choosing one
+    split_win = edit.get("split_src")           # [src_in, src_out] or None
+    if split_win:
+        a0, a1 = float(split_win[0]), float(split_win[1])
+        wide = next((sh for sh in shots["shots"]
+                     if sh.get("candidates") and len(sh["candidates"]) >= 2
+                     and sh["t1"] > a0 and sh["t0"] < a1), None)
+        if wide:
+            cands = sorted(wide["candidates"], key=lambda c: c["cx"])
+            left, right = cands[0], cands[-1]
+            ss, ee = max(a0, wide["t0"]), min(a1, wide["t1"])
+            if ee - ss > 0.6:
+                out, cur = [], []
+                for pc in pieces:                       # replace the overlap
+                    if pc["src_out"] <= ss or pc["src_in"] >= ee:
+                        out.append(pc)
+                        continue
+                    if pc["src_in"] < ss:
+                        cur.append({**pc, "src_out": ss})
+                    if pc["src_out"] > ee:
+                        cur.append({**pc, "src_in": ee})
+                first_i = next((i for i, pc in enumerate(pieces)
+                                if pc["src_out"] > ss and pc["src_in"] < ee), len(out))
+                out = out[:first_i] + [{"src_in": round(ss, 3), "src_out": round(ee, 3),
+                                        "shot": wide, "segment": -1, "split": True,
+                                        "side": {"left": left, "right": right}}] + \
+                      out[first_i:] + cur
+                pieces = sorted(out, key=lambda pc: pc["src_in"])
+                plan["split_frame"] = {"src": [round(ss, 3), round(ee, 3)],
+                                       "left_cx": left["cx"], "right_cx": right["cx"]}
+
     # punch-in doubles: a beat reads as an edit because the frame changes size
     punch = float(edit.get("punch_zoom", 0.90))
     out_t = 0.0
@@ -216,15 +248,43 @@ def main() -> int:
 
     parts = []
     for i, p in enumerate(pieces):
-        b = p["crop"]
         f = store.path(cid, f"work/{cid_clip}_v{i:02d}.mp4")
-        vf = (f"crop={b['w']}:{b['h']}:{b['x']}:{b['y']},"
-              f"scale={W}:{H}:flags=lanczos,setsar=1,fps={fps}")
-        subprocess.run([FF, "-nostdin", "-v", "error", "-y",
-                        "-ss", f"{p['src_in']:.3f}", "-t", f"{p['src_out'] - p['src_in']:.3f}",
-                        "-i", str(SRC), "-vf", vf, "-an",
-                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-                        "-pix_fmt", "yuv420p", str(f)], check=True)
+        dur_i = p["src_out"] - p["src_in"]
+        if p.get("split"):
+            half_w = (W - 8) // 2
+            half_h = H
+            # each side gets its own 9:16-ish crop around that speaker, joined by
+            # an 8 px lime rule, the way the reference split does it
+            boxes = []
+            for side_key, w_frac in (("left", 0.0), ("right", 1.0)):
+                cx = p["side"][side_key]["cx"] * 3840
+                cw = int(half_w * 3840 / W)
+                ch = int(cw * H / half_w)
+                if ch > 2160:
+                    ch = 2160
+                    cw = int(ch * half_w / H)
+                cx0 = int(max(0, min(3840 - cw, cx - cw / 2)))
+                cy0 = int(max(0, min(2160 - ch, 0.40 * 2160 - ch / 2)))
+                boxes.append((cx0, cy0, cw, ch))
+            (lx, ly, lw, lh), (rx, ry, rw_, rh) = boxes
+            fc = (f"[0:v]crop={lw}:{lh}:{lx}:{ly},scale={half_w}:{half_h}:flags=lanczos[l];"
+                  f"[0:v]crop={rw_}:{rh}:{rx}:{ry},scale={half_w}:{half_h}:flags=lanczos[r];"
+                  f"color=c=0xC6FF00:s=8x{half_h}:d=1[lime];"
+                  f"[l][lime][r]hstack=inputs=3,setsar=1,fps={fps}[v]")
+            subprocess.run([FF, "-nostdin", "-v", "error", "-y",
+                            "-ss", f"{p['src_in']:.3f}", "-t", f"{dur_i:.3f}",
+                            "-i", str(SRC), "-filter_complex", fc, "-map", "[v]", "-an",
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                            "-pix_fmt", "yuv420p", str(f)], check=True)
+        else:
+            b = p["crop"]
+            vf = (f"crop={b['w']}:{b['h']}:{b['x']}:{b['y']},"
+                  f"scale={W}:{H}:flags=lanczos,setsar=1,fps={fps}")
+            subprocess.run([FF, "-nostdin", "-v", "error", "-y",
+                            "-ss", f"{p['src_in']:.3f}", "-t", f"{dur_i:.3f}",
+                            "-i", str(SRC), "-vf", vf, "-an",
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                            "-pix_fmt", "yuv420p", str(f)], check=True)
         parts.append(f)
 
     lst = store.path(cid, f"work/{cid_clip}_plist.txt")

@@ -29,7 +29,7 @@ import imageio_ffmpeg
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from orchestrator import store, timeline, graphics, motion  # noqa: E402
+from orchestrator import store, timeline, graphics, motion, bands  # noqa: E402
 
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 W, H = 1080, 1920
@@ -127,55 +127,8 @@ def build_ass(path: Path, words, dur: float, hook: dict, brief: dict, suppress=(
     H_W, H_H = 1080, 1920
 
     ev = []
-    who = hook.get("who") or ""
-    big = hook.get("text") or ""
     face = hook.get("face") or {}
-
-    # ---- hook: kicker + display line + draw-on rule, stacked in the empty band
-    face_top = int((face.get("top", 0.35)) * H_H)
-    hook_px = int(hk.get("fontsize", 112))
-    while hook_px > 62 and len(big) * hook_px * 0.44 > H_W * 0.86:
-        hook_px -= 3
-    line_h = int(hook_px * 1.14)
-    kick_px = int(hk.get("who_fontsize", 32))
-    min_y = int(hk.get("min_y", 250))
-
-    def layout(with_kicker):
-        block = line_h + ((kick_px + 22) if with_kicker else 0)
-        y_big = face_top - 74 - line_h // 2
-        return y_big, block, (y_big - block // 2) >= min_y
-
-    y_big, block_h, ok = layout(bool(who))
-    if not ok and who:
-        who = ""
-        y_big, block_h, ok = layout(False)
-    if not ok:
-        face_bottom = int((face.get("bottom", 0.55)) * H_H)
-        y_big = min(H_H - int(cap.get("margin_v", 600)) - 250, face_bottom + 40 + line_h // 2)
-    y_kick = y_big - line_h // 2 - kick_px // 2 - 16 if who else y_big
-    rule_y = y_big + int(line_h * 0.62)
-
-    # the number in the hook gets the accent colour, the rest stays white
-    m = re.search(r"(\$?\d[\d,\.]*\s*(?:M|K|B|million|billion|k)?)", big, re.I)
-    if m:
-        a, b = big[:m.start()], big[m.start():m.end()]
-        c = big[m.end():]
-        big_ass = f"{a}{{\\c{brand}&}}{b}{{\\c&H00FFFFFF&}}{c}"
-    else:
-        big_ass = big
-
-    if who:
-        ev.append(f"Dialogue: 3,{clk(0)},{clk(hook_secs)},Who,"
-                  f"{{\\an5\\pos(540,{y_kick})\\move(540,{y_kick + 18},540,{y_kick},0,200)"
-                  f"\\fad(90,180)}}{who}")
-    ev.append(f"Dialogue: 4,{clk(0)},{clk(hook_secs)},Hook,"
-              f"{{\\an5\\pos(540,{y_big})\\move(540,{y_big + 30},540,{y_big},0,260)"
-              f"\\fad(110,200)\\t(240,420,\\fscx103\\fscy103)\\t(420,620,\\fscx100\\fscy100)}}"
-              f"{big_ass}")
-    bar_w = int(hk.get("bar_w", min(620, int(len(big) * hook_px * 0.46))))
-    bar = (r"{\an5\pos(540," + str(rule_y) + r")\fad(140,220)\p1}"
-           + f"m 0 0 l {bar_w} 0 {bar_w} 9 0 9" + r"{\p0}")
-    ev.append(f"Dialogue: 2,{clk(0.22)},{clk(hook_secs)},Bar,{bar}")
+    face_top = int((face.get("top", 0.35)) * H_H)   # used by the face-clearance check
 
     # ---- captions: 2-3 words, heavy grotesque, keyword in accent + capitalised
     def held(a, b):
@@ -209,20 +162,13 @@ WrapStyle: 0
 ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hook,Anton,{hook_px},&H00FFFFFF,&H00141010,&H00000000,0,0,0,0,100,100,1,0,1,6,3,5,60,60,0,1
-Style: Who,Inter,{kick_px},&H0000E5FF,&H00141010,&H00000000,-1,0,0,0,100,100,4,0,1,4,0,5,60,60,0,1
-Style: Bar,Anton,10,&H0000E5FF,&H0000E5FF,&H0000E5FF,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
 Style: Cap,Archivo Black,{cap.get('fontsize', 64)},&H00FFFFFF,&H00101010,&H00000000,0,0,0,0,100,100,0,0,1,5,3,5,40,40,0,1
 [Events]
 Format: Layer, Start, End, Style, Text
 """ + "\n".join(ev) + "\n", encoding="utf8")
-    text_w = min(int(H_W * 0.88), int(len(big) * hook_px * 0.44))
     return {"events": len(ev), "groups": len(groups), "pop": None,
-            "hook_box": {"y_top": int(min(y_big - line_h // 2, y_kick - kick_px // 2)),
-                         "y_bottom": int(rule_y + 10),
-                         "x0": int(540 - text_w // 2), "x1": int(540 + text_w // 2),
-                         "fontsize": hook_px, "who_shown": bool(who)},
-            "face_box": face}
+            "hook_box": None, "face_box": face,
+            "hook_source": "top title band (persistent)"}
 
 
 def main() -> int:
@@ -299,6 +245,13 @@ def main() -> int:
         "number_pop": info["pop"], "hook_box": info["hook_box"],
         "face_box_hook_window": info["face_box"]})
 
+    # ---- letterbox: blank bands carry the title and what the clip is about
+    band_spec = brief.get("bands") or {}
+    band_files = bands.render(store.campaign_dir(cid), clip, band_spec) if band_spec else None
+    vid_y = band_files["video_y"] if band_files else 0
+    vid_h = band_files["video_h"] if band_files else H
+    store.artifact(cid, f"bands_{clip}", band_files or {"none": True})
+
     wmc = dict(brief.get("brand_rules", {}).get("watermark", {}))
     wmc.update(brief.get("watermark", {}) or {})
     wm = ROOT / wmc.get("file", wmc.get("asset", "assets/watermark_white.png"))
@@ -306,35 +259,52 @@ def main() -> int:
         raise SystemExit(f"watermark asset missing: {wm}")
     wm_w = int(wmc.get("width", 780))
     pos = wmc.get("position", "top-center")
-    if pos.startswith("top"):
-        wm_y = str(int(wmc.get("margin_top", 64)))
-    else:
-        wm_y = f"H-{int(wmc.get('margin_bottom', 300))}-h"
-    wm_x = {"top-left": str(int(wmc.get("margin_side", 50))),
-            "top-right": f"W-w-{int(wmc.get('margin_side', 50))}",
-            "bottom-left": str(int(wmc.get("margin_side", 50))),
-            "bottom-right": f"W-w-{int(wmc.get('margin_side', 50))}"}.get(pos, "(W-w)/2")
+    wm_off = int(wmc.get("margin_top", 22))
+    wm_x = {"top-left": "34", "top-right": "W-w-34"}.get(pos, "(W-w)/2")
+    if band_files:
+        # with bands on, the watermark lives in the top band: on screen for the
+        # whole clip and fully readable, without eating the picture area
+        from PIL import Image as _Img
+        top_band = _Img.open(band_files["top"]).convert("RGBA")
+        wm_img = _Img.open(wm).convert("RGBA")
+        tw = int(wmc.get("band_width", 330))
+        wm_img = wm_img.resize((tw, int(tw * wm_img.height / wm_img.width)), _Img.LANCZOS)
+        top_band.alpha_composite(wm_img, (top_band.width - tw - 34,
+                                          int(wmc.get("band_y", 40))))
+        band_files["top"] = str(Path(band_files["top"]).with_name(
+            Path(band_files["top"]).stem + "_wm.png"))
+        top_band.save(band_files["top"])
 
     grade = brief.get("grade", {})
-    fparts = [f"[2:v]scale={wm_w}:-2[wm]", f"[0:v][wm]overlay={wm_x}:{wm_y}:format=auto[v0]"]
-    last = "v0"
+    fparts = [
+        f"[0:v]scale={W}:{vid_h}:flags=lanczos,setsar=1,"
+        f"eq=contrast={grade.get('contrast', 1.08)}:saturation={grade.get('saturation', 1.10)}"
+        f":brightness={grade.get('brightness', 0.012)},"
+        f"vignette=angle=PI/{grade.get('vignette', 6.5)},"
+        f"noise=alls={grade.get('grain', 3)}:allf=t+u[vid]",
+        f"[2:v]scale={wm_w}:-2[wm]",
+        f"[vid][wm]overlay={wm_x}:{wm_off}:format=auto[v1]",
+    ]
+    if band_files:
+        fparts.append("[3:v][v1][4:v]vstack=inputs=3[canvas]")
+    else:
+        fparts.append("[v1]copy[canvas]")
+    last = "canvas"
     for i, c in enumerate(cards):
-        idx = i + 3
+        idx = i + (5 if band_files else 3)
         fparts.append(f"[{idx}:v]setpts=PTS+{c['start']}/TB[g{i}]")
         fparts.append(f"[{last}][g{i}]overlay=x={c['x']}:y={c['y']}"
                       f":enable='between(t,{c['start']},{c['end']})'"
-                      f":format=auto:eof_action=pass[v{i + 1}]")
-        last = f"v{i + 1}"
-    fparts.append(f"[{last}]ass={ass.as_posix()},"
-                  f"eq=contrast={grade.get('contrast', 1.07)}:saturation={grade.get('saturation', 1.12)}"
-                  f":brightness={grade.get('brightness', 0.01)},"
-                  f"vignette=angle=PI/{grade.get('vignette', 7)},"
-                 f"noise=alls={grade.get('grain', 3)}:allf=t+u,setsar=1[v]")
+                      f":format=auto:eof_action=pass[c{i + 1}]")
+        last = f"c{i + 1}"
+    fparts.append(f"[{last}]ass={ass.as_posix()},setsar=1[v]")
     fc = ";".join(fparts)
 
     out = store.path(cid, f"clips/{clip}.mp4")
     subprocess.run([FF, "-nostdin", "-v", "error", "-y",
                     "-i", str(picture), "-i", str(audio), "-i", str(wm),
+                    *(["-i", band_files["top"], "-i", band_files["bottom"]]
+                      if band_files else []),
                     *[x for c in cards for x in ("-i", c["path"])],
                     "-filter_complex", fc,
                     "-map", "[v]", "-map", "1:a", "-t", f"{dur:.3f}",
@@ -347,6 +317,8 @@ def main() -> int:
                       "caption_groups": info["groups"], "hook": hook,
                       "graphics": [{"kind": c["kind"], "start": c["start"],
                                     "end": c["end"], "y": c["y"]} for c in cards],
+                      "bands": band_files,
+                      "video_area": {"y": vid_y, "h": vid_h},
                       "number_pop": info["pop"],
                       "size_mb": round(out.stat().st_size / 1e6, 1)}, indent=1))
     return 0

@@ -75,19 +75,16 @@ def main() -> int:
                     "-filter_complex", ";".join(graph), "-map", "[dia]",
                     "-ac", "1", "-ar", "44100", str(dialogue)], check=True)
 
-    bed_path = work.with_name(f"{clip}_bed.wav"); sfx.bed(bed_path, dur, bpm=at.get("bed_bpm", 82))
     wh = work.with_name("whoosh.wav"); sfx.whoosh(wh, 0.62)
     im_ = work.with_name("impact.wav"); sfx.impact(im_, 0.42)
     rs = work.with_name("riser.wav"); sfx.riser(rs, 1.4)
     sub = work.with_name("impact_sub.wav"); sfx.impact(sub, 0.55, pitch=48.0)
 
-    cues = [{"cue": "bed", "asset": "synthesised dark bed", "provenance": "generated in D7",
-             "gain_db": music_db, "at": 0.0,
-             "purpose": "low bed under speech; ducked by the sidechain"}]
+    cues = []   # no music bed: clean dialogue only (see docs/CRAFT.md)
 
     # --- transitions that carry a card get a whoosh straddling the cut, and the
     # card itself gets an impact exactly as it lands
-    gfx = store.read_json(cid, f"graphics_{clip}.v1.json") or {"payload": {"cards": []}}
+    gfx = store.read_json(cid, f"artifacts/graphics_{clip}.v1.json") or {"payload": {"cards": []}}
     cards = gfx["payload"]["cards"]
     pic_cuts = [e["output_out"] for e in edl["events"][:-1]]
     for i, c in enumerate(cards):
@@ -104,7 +101,8 @@ def main() -> int:
 
     # --- the line that carries the takeaway gets a riser that stops dead on it
     hooks = store.read_json(cid, "artifacts/hook_cards.v1.json")["payload"]["cards"]
-    punch = [e for e in events if e.get("purpose", "").startswith("punch")]
+    punch = [] if at.get("no_riser") else [e for e in events
+                                           if e.get("purpose", "").startswith("punch")]
     if punch:
         t_punch = punch[0]["output_in"]
         cues.append({"cue": "riser", "asset": "synthesised riser", "provenance": "generated in D7",
@@ -117,7 +115,7 @@ def main() -> int:
     # --- only the cuts that matter get a sound: quiet whooshes on picture changes
     # that are neither already sounded by a card nor within 0.6 s of another cue
     sounded = [c["at"] for c in cues]
-    for i, pc in enumerate(pic_cuts):
+    for i, pc in enumerate([] if at.get("clean_cuts") else pic_cuts):
         if any(abs(pc - s2) < 0.6 for s2 in sounded):
             continue
         cues.append({"cue": f"whoosh_{i}", "asset": "synthesised whoosh",
@@ -126,18 +124,17 @@ def main() -> int:
         sounded.append(pc)
 
     # ---------------- mix
-    inputs = ["-i", str(dialogue), "-i", str(bed_path)]
+    inputs = ["-i", str(dialogue)]
     # every layer is forced to 48 kHz stereo before mixing: a format mismatch here
     # is what silently kills a sidechain and leaves the bed sitting on the voice
-    filters = [f"[0:a]loudnorm=I={lufs - 5}:TP={tp - 5}:LRA=11,aresample={sfx.SR},"
-               f"aformat=channel_layouts=stereo,asplit=2[dia][sc]",
-               f"[1:a]atrim=0:{dur},asetpts=N/SR/TB,aresample={sfx.SR},"
-               f"aformat=channel_layouts=stereo[bed]"]
-    filters.append("[bed][sc]sidechaincompress=threshold=0.05:ratio=6:attack=8:release=300"
-                   ":makeup=1[bedduck]")
-    mix = ["[dia]", "[bedduck]"]
-    idx = 2
-    for c in cues[1:]:
+    # dialogue chain: high-pass off the desk rumble, light broadband denoise for
+    # the room hiss, then normalise with headroom for the effects
+    filters = [f"[0:a]highpass=f=72,afftdn=nf=-28,"
+               f"loudnorm=I={lufs - 3}:TP={tp - 5}:LRA=11,aresample={sfx.SR},"
+               f"aformat=channel_layouts=stereo[dia]"]
+    mix = ["[dia]"]
+    idx = 1
+    for c in cues:
         src = im_ if c["cue"].startswith("impact_claim") else (
             im_ if c["cue"].startswith("impact") else (
                 wh if c["cue"].startswith("whoosh") else rs))

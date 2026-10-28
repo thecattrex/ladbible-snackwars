@@ -45,3 +45,18 @@ reasoning can be re-checked, not repeated from memory.
 - Generic icon sets and templates.
 - Captions that never change weight or size.
 - A whoosh on every single cut.
+
+## Second pass — reference-driven corrections
+
+After watching a reference short the client supplied (multi-cam podcast clip):
+- **Cut on the speaker, not on the clock.** Hard cut to whoever is talking; when
+  both talk at once, go to a **split frame with a divider** instead of picking one.
+  The divider should read as a deliberate line (brand colour), not a seam.
+- **No music bed.** The reference runs clean dialogue plus a few transition
+  effects. A synthesised bed under speech was the "annoying background sound";
+  ambience that is not the source audio is out.
+- **Effects only where a picture event happens** — one soft impact as a card
+  lands. No riser on claims, no whoosh on every cut (the reference has none).
+- **Letterbox bands**: blank space above and below the picture carries the
+  headline and the one-line summary, with the operative word marked. That keeps
+  text off the speaker entirely and makes the clip legible muted.

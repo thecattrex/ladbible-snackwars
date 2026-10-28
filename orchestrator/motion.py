@@ -251,22 +251,22 @@ def card_counter(dur, w, h, *, label, value, unit, currency=True, accent_note=""
         im = band(w, h)
         d = ImageDraw.Draw(im)
         if label:
-            kicker(d, (MARGIN, int(h * 0.26)), label)
+            kicker(d, (MARGIN, int(h * 0.36)), label)
         value_s = fmt(value * k, currency)
         px = 132
         f = display(px)
         while px > 64 and d.textlength(value_s, font=f) > w * 0.74:
             px -= 4
             f = display(px)
-        d.text((MARGIN, int(h * 0.58)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
+        d.text((MARGIN, int(h * 0.66)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
         vw = d.textlength(value_s, font=f)
         if unit:
-            d.text((MARGIN + vw + 16, int(h * 0.58) + px * 0.18), unit, font=ui(36),
+            d.text((MARGIN + vw + 16, int(h * 0.66) + px * 0.18), unit, font=ui(36),
                    fill=LIME + (255,), anchor="lm")
         if accent_note:
             d.text((MARGIN, h - 46), accent_note, font=ui(29), fill=(205, 212, 220, 255),
                    anchor="lm")
-        draw_underline(d, MARGIN, int(h * 0.58 + px * 0.52), int(w * 0.26),
+        draw_underline(d, MARGIN, int(h * 0.66 + px * 0.52), int(w * 0.26),
                        ease_inout_cubic(min(1.0, t / 0.7)))
         return grain(im, 3.0, seed=int(t * 30) % 97)
     return frame
@@ -277,20 +277,20 @@ def card_cost(dur, w, h, *, value, label, sub):
         k = ease_out_expo(min(1.0, t / max(0.5, dur * 0.34)))
         im = band(w, h)
         d = ImageDraw.Draw(im)
-        kicker(d, (MARGIN, int(h * 0.26)), label)
+        kicker(d, (MARGIN, int(h * 0.36)), label)
         value_s = fmt(value * k)
         px = 126
         f = display(px)
         while px > 60 and d.textlength(value_s, font=f) > w * 0.52:
             px -= 4
             f = display(px)
-        d.text((MARGIN, int(h * 0.60)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
+        d.text((MARGIN, int(h * 0.68)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
         vw = d.textlength(value_s, font=f)
-        d.text((MARGIN + vw + 14, int(h * 0.60) + px * 0.18), "/mo", font=ui(36),
+        d.text((MARGIN + vw + 14, int(h * 0.68) + px * 0.18), "/mo", font=ui(36),
                fill=LIME + (255,), anchor="lm")
         if sub:
             d.text((MARGIN, h - 46), sub, font=ui(29), fill=(205, 212, 220, 255), anchor="lm")
-        draw_underline(d, MARGIN, int(h * 0.60 + px * 0.52), int(w * 0.22),
+        draw_underline(d, MARGIN, int(h * 0.68 + px * 0.52), int(w * 0.22),
                        ease_inout_cubic(min(1.0, t / 0.7)))
         note = money_note(int(w * 0.22), int(h * 0.62), t)
         im.alpha_composite(note, (int(w * 0.72), int(h * 0.22)))
@@ -303,16 +303,16 @@ def card_people(dur, w, h, *, total, label, sub):
         k = ease_inout_cubic(min(1.0, t / max(0.8, dur * 0.55)))
         im = band(w, h)
         d = ImageDraw.Draw(im)
-        kicker(d, (MARGIN, int(h * 0.26)), label)
+        kicker(d, (MARGIN, int(h * 0.36)), label)
         value_s = str(int(total * k))
         f = display(124)
-        d.text((MARGIN, int(h * 0.60)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
+        d.text((MARGIN, int(h * 0.68)), value_s, font=f, fill=WHITE + (255,), anchor="lm")
         vw = d.textlength(value_s, font=f)
-        d.text((MARGIN + vw + 14, int(h * 0.60) + 22), "people", font=ui(36),
+        d.text((MARGIN + vw + 14, int(h * 0.68) + 22), "people", font=ui(36),
                fill=LIME + (255,), anchor="lm")
         if sub:
             d.text((MARGIN, h - 46), sub, font=ui(29), fill=(205, 212, 220, 255), anchor="lm")
-        draw_underline(d, MARGIN, int(h * 0.60 + 64), int(w * 0.22),
+        draw_underline(d, MARGIN, int(h * 0.68 + 64), int(w * 0.22),
                        ease_inout_cubic(min(1.0, t / 0.7)))
         gw, gh = int(w * 0.26), int(h * 0.50)
         g = Image.new("RGBA", (gw, gh), (0, 0, 0, 0))
@@ -339,12 +339,12 @@ def card_math(dur, w, h, *, left, right, result, label):
     def frame(t):
         im = band(w, h)
         d = ImageDraw.Draw(im)
-        kicker(d, (MARGIN, int(h * 0.26)), label)
+        kicker(d, (MARGIN, int(h * 0.36)), label)
         parts = [(left, display(62), WHITE), ("÷", display(52), GREY),
                  (right, display(62), WHITE), ("=", display(52), GREY),
                  (result, display(78), LIME)]
         x = MARGIN
-        base_y = int(h * 0.56)
+        base_y = int(h * 0.64)
         for i, (p, f, col) in enumerate(parts):
             appear = ease_out_expo(min(1.0, max(0.0, (t - 0.10 * i) / 0.28)))
             if appear <= 0:
@@ -369,9 +369,9 @@ def card_chip(dur, w, h, *, label, sub, icon="ai"):
         f = display(66)
         while f.size > 40 and d.textlength(label, font=f) > w * 0.54:
             f = display(f.size - 3)
-        d.text((MARGIN, int(h * 0.52)), label, font=f, fill=WHITE + (255,), anchor="lm")
-        d.text((MARGIN, int(h * 0.74)), sub, font=ui(34), fill=LIME + (245,), anchor="lm")
-        draw_underline(d, MARGIN, int(h * 0.84), int(w * 0.22),
+        d.text((MARGIN, int(h * 0.60)), label, font=f, fill=WHITE + (255,), anchor="lm")
+        d.text((MARGIN, int(h * 0.80)), sub, font=ui(34), fill=LIME + (245,), anchor="lm")
+        draw_underline(d, MARGIN, int(h * 0.88), int(w * 0.22),
                        ease_inout_cubic(min(1.0, t / 0.6)))
         return grain(im, 3.0, seed=int(t * 30) % 97)
     return frame
@@ -385,11 +385,11 @@ def card_quote(dur, w, h, *, text_line, who):
         f = grotesk(48)
         while f.size > 26 and d.textlength(text_line, font=f) > w * 0.82:
             f = grotesk(f.size - 2)
-        d.text((MARGIN, int(h * 0.50)), text_line, font=f,
+        d.text((MARGIN, int(h * 0.58)), text_line, font=f,
                fill=WHITE + (int(255 * k),), anchor="lm")
-        d.line([MARGIN, int(h * 0.66), MARGIN + int(34 * k), int(h * 0.66)],
+        d.line([MARGIN, int(h * 0.72), MARGIN + int(34 * k), int(h * 0.72)],
                fill=LIME + (255,), width=5)
-        d.text((MARGIN + 50, int(h * 0.66)), who.upper(), font=ui(26), fill=(205, 212, 220, 255),
+        d.text((MARGIN + 50, int(h * 0.72)), who.upper(), font=ui(26), fill=(205, 212, 220, 255),
                anchor="lm")
         return grain(im, 3.0, seed=int(t * 30) % 97)
     return frame
