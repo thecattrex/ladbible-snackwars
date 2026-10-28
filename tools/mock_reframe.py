@@ -47,21 +47,31 @@ def centred(draw, xy, text, f, fill, shadow=True, tracking=0):
     draw.text((x, xy[1]), text, font=f, fill=fill)
 
 
-def twitch_banner() -> Image.Image:
-    """A stand-in for the streamer's Twitch banner: brand purple, handle, stripes.
+BANNER = ROOT.parent / "clipper/assets/irubyana/banner.jpg"
+if not BANNER.exists():
+    BANNER = ASSETS / "irubyana/banner.jpg"
 
-    The real banner is in the campaign's reference file (locked until the campaign
-    is joined), so this placeholder only proves the layout and the safe area for
-    the text; the finished clips will use the supplied image.
+
+def twitch_banner() -> Image.Image:
+    """The streamer's real Twitch banner, filling the 9:16 background.
+
+    The banner is 1200x480 and carries the name and the channel link in its middle,
+    which is exactly where a clip would cover it. So it is scaled to cover the
+    phone frame (the edges crop, the artwork does not distort), then dimmed enough
+    that our text plates read on top of it.
     """
-    img = Image.new("RGB", (W, H), (24, 12, 38))
-    d = ImageDraw.Draw(img)
-    for i in range(-H, W, 90):                       # diagonal brand stripes
-        d.line([(i, 0), (i + H, H)], fill=(34, 18, 54), width=34)
-    d.rectangle([0, 0, W, 300], fill=(145, 70, 255))  # twitch purple band
-    d.rectangle([0, H - 300, W, H], fill=(145, 70, 255))
-    centred(d, (W / 2, 34), "IRUBYANA", font("Anton-Regular.ttf", 84), (255, 255, 255), tracking=4)
-    return img
+    art = Image.open(BANNER).convert("RGB")
+    scale = max(W / art.size[0], H / art.size[1])
+    big = art.resize((int(art.size[0] * scale + 0.5), int(art.size[1] * scale + 0.5)),
+                     Image.LANCZOS)
+    left = (big.size[0] - W) // 2
+    top = max(0, int((big.size[1] - H) * 0.78))     # keep the name + URL in frame
+    canvas = big.crop((left, top, left + W, top + H))
+    # keep the artwork visible but never competing with the clip or the text
+    canvas = Image.eval(canvas, lambda v: int(v * 0.78))
+    veil = Image.new("RGB", (W, H), (16, 6, 24))
+    canvas = Image.blend(canvas, veil, 0.18)
+    return canvas
 
 
 def banner_layout(src: Image.Image) -> Image.Image:
