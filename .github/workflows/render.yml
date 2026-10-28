@@ -1,0 +1,116 @@
+name: render-clips
+
+# Batch render for a campaign: every clip runs the full department chain in its
+# own job, so twenty clips take as long as the slowest one instead of the sum.
+# Media and campaign state arrive as release assets (the repo itself never
+# carries client footage), D9 decides PASS/REVISE inside the job, and each job
+# uploads the finished clip plus its QA report.
+
+on:
+  workflow_dispatch:
+    inputs:
+      campaign:
+        description: campaign id under campaigns/
+        required: true
+        default: higgsfield-20vc
+      clips:
+        description: space separated clip ids (blank = every clip that has state)
+        required: false
+        default: ""
+
+concurrency:
+  group: render-${{ github.event.inputs.campaign }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      clips: ${{ steps.list.outputs.clips }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        run: |
+          set -e
+          want="${{ github.event.inputs.clips }}"
+          if [ -z "$want" ]; then
+            want=$(python3 tools/clip_list.py "${{ github.event.inputs.campaign }}")
+          fi
+          json=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1].split()))" "$want")
+          echo "clips=$json" >> "$GITHUB_OUTPUT"
+          echo "rendering: $json"
+
+  render:
+    needs: plan
+    if: needs.plan.outputs.clips != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        clip: ${{ fromJson(needs.plan.outputs.clips) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: packages
+        run: |
+          python -m pip install -q --upgrade pip
+          python -m pip install -q imageio-ffmpeg "opencv-python-headless<5" pillow numpy
+
+      - name: media and campaign state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          mkdir -p /var/tmp/clips
+          gh release download clipfarm-media \
+            --repo "${{ github.repository }}" \
+            --pattern "state.tar.gz" --clobber
+          gh release download clipfarm-media \
+            --repo "${{ github.repository }}" \
+            --pattern "media-${{ matrix.clip }}.tar.gz" --clobber
+          tar -xzf state.tar.gz -C .
+          mkdir -p /var/tmp/clips/${{ matrix.clip }}
+          tar -xzf media-${{ matrix.clip }}.tar.gz -C /var/tmp/clips/${{ matrix.clip }}
+          ls -la /var/tmp/clips/${{ matrix.clip }}
+
+      - name: departments D6 -> D9
+        env:
+          MEDIA_ROOT: /var/tmp/clips/${{ matrix.clip }}
+        run: |
+          set -e
+          export SRC_OFFSET=$(cat /var/tmp/clips/${{ matrix.clip }}/offset.txt)
+          python departments/d6_edit.py "${{ github.event.inputs.campaign }}" --clip "${{ matrix.clip }}"
+          python departments/d7_audio.py "${{ github.event.inputs.campaign }}" --clip "${{ matrix.clip }}"
+          python departments/d8_captions.py "${{ github.event.inputs.campaign }}" --clip "${{ matrix.clip }}"
+          python departments/d9_qa.py "${{ github.event.inputs.campaign }}" --clip "${{ matrix.clip }}" \
+            | tee "/var/tmp/clips/${{ matrix.clip }}/qa.json"
+
+      - name: verdict
+        id: verdict
+        run: |
+          v=$(python3 tools/verdict.py "/var/tmp/clips/${{ matrix.clip }}/qa.json")
+          echo "verdict=$v" >> "$GITHUB_OUTPUT"
+          echo "${{ matrix.clip }}: $v"
+          cp "/var/tmp/clips/${{ matrix.clip }}/qa.json" \
+             "state/${{ github.event.inputs.campaign }}/qa_${{ matrix.clip }}.json"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: clip-${{ matrix.clip }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            state/${{ github.event.inputs.campaign }}/clips/${{ matrix.clip }}.mp4
+            state/${{ github.event.inputs.campaign }}/render/${{ matrix.clip }}_*.m4a
+            state/${{ github.event.inputs.campaign }}/artifacts/edl_picture_${{ matrix.clip }}.v1.json
+            state/${{ github.event.inputs.campaign }}/artifacts/graphics_${{ matrix.clip }}.v1.json
+            state/${{ github.event.inputs.campaign }}/artifacts/captions_${{ matrix.clip }}.v1.json
+            state/${{ github.event.inputs.campaign }}/artifacts/cue_sheet_${{ matrix.clip }}.v1.json
+            state/${{ github.event.inputs.campaign }}/qa_${{ matrix.clip }}.json

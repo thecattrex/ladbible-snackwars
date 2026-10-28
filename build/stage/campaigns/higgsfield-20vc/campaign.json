@@ -1,0 +1,163 @@
+{
+ "campaign_id": "higgsfield-20vc",
+ "mode": "RUN_CAMPAIGN",
+ "client": "Higgsfield AI (via CLIPFARM)",
+ "source": {
+  "type": "LOCAL_FILE",
+  "path_or_url": "/var/tmp/hf/src.mp4",
+  "rights": "OTHER_AUTHORIZED_BASIS",
+  "rights_note": "Client-supplied campaign footage (Drive folder + WeTransfer transfer ac6977b3...), supplied under the CLIPFARM x Higgsfield brief for clipping. No outside footage permitted.",
+  "title": "The Untold Story of Higgsfield - Alex Mashrabov - 4K [jszn8rFtxm4]",
+  "youtube_id": "jszn8rFtxm4",
+  "duration_s": 4542.29,
+  "fps": 24,
+  "resolution": "3840x2160"
+ },
+ "target_clips": 20,
+ "clip_length": {
+  "min": 30,
+  "max": 60
+ },
+ "structure": "ADAPTIVE_HIERARCHY",
+ "target_format": "9:16",
+ "audience": "US/UK/CA/AU founders and AI-curious operators; 40%+ views must come from those four markets",
+ "niche": "AI / tech founder interview (20VC)",
+ "spoken_language": "en",
+ "caption_language_and_script": "English (Latin script), word-for-word from the audio",
+ "style": "Copy the pacing, cut rhythm, framing and on-screen text of the client's example clips",
+ "narration": false,
+ "publish": false,
+ "budget": {
+  "cpm_usd": 1.0,
+  "max_usd_per_clip": 350,
+  "min_payout_usd": 1
+ },
+ "deadline": null,
+ "review_revisions": 2,
+ "assets": [
+  "assets/watermark_higgsfield.png",
+  "assets/watermark_higgsfield_black.png"
+ ],
+ "brand_rules": {
+  "watermark": {
+   "required": true,
+   "asset": "assets/watermark_higgsfield.png",
+   "position": "top-right",
+   "whole_clip": true,
+   "must_stay_readable": true,
+   "never_covered_by_text_or_captions": true
+  },
+  "on_screen_text": {
+   "required": true,
+   "caption_scope": "whole_clip",
+   "hook_card": true,
+   "hook_card_window_s": [
+    0,
+    3
+   ],
+   "keyword_highlight": true,
+   "keep_off_faces_and_app_ui": true
+  },
+  "verbatim_rule": "NEVER change what Alex says. Do not cut his words into a new sentence, do not imply he endorses a product. Cut pauses/repeats only; self-corrections, 'but' and Harry's real reactions stay.",
+  "hook_window_s": 2,
+  "platforms": [
+   "Instagram Reels",
+   "YouTube Shorts"
+  ],
+  "tags": {
+   "instagram": "@higgsfield.ai @20vchq",
+   "youtube": "@HiggsfieldAI + @20VC"
+  },
+  "post_rules": {
+   "days_live_min": 30,
+   "likes_visible": true,
+   "min_engagement_rate": 0.002,
+   "min_tier1_view_share": 0.4,
+   "no_paid_boost": true,
+   "no_reposts": true
+  }
+ },
+ "audio_targets": {
+  "lufs": -16,
+  "true_peak": -1.0,
+  "music_gain_db": -19,
+  "whoosh_gain_db": -20,
+  "whoosh_soft_db": -27,
+  "impact_gain_db": -21,
+  "riser_gain_db": -22,
+  "bed_bpm": 82,
+  "no_riser": true,
+  "clean_cuts": true
+ },
+ "delivery": {
+  "format": "mp4",
+  "resolution": "1080x1920",
+  "fps": 30,
+  "codec": "h264",
+  "audio": "aac"
+ },
+ "asr_model": "small.en",
+ "framing": {
+  "crop_w": 1068,
+  "crop_h": 1898,
+  "punch_in": 1.07,
+  "face_presence_min": 0.5,
+  "note": "framing is judged by presence + centred placement, not by a 100% detection rate: a speaker who turns his head is still on screen"
+ },
+ "watermark": {
+  "asset": "assets/watermark_higgsfield.png",
+  "width": 620,
+  "position": "top-center",
+  "margin_top": 42
+ },
+ "hook_card": {
+  "seconds": 2.9,
+  "fontsize": 112,
+  "min_y": 330,
+  "bar_w": 520,
+  "who_line": ""
+ },
+ "captions": {
+  "max_words": 3,
+  "fontsize": 62,
+  "margin_v": 300,
+  "highlight": true,
+  "brand_colour_ass": "&H0000E5FF"
+ },
+ "caption_fixes": {
+  "c557": [
+   [
+    "$10 ,000",
+    "$10,000"
+   ],
+   [
+    "Higgs Field",
+    "Higgsfield"
+   ]
+  ]
+ },
+ "edit": {
+  "max_gap": 0.6,
+  "punch_on_number": true,
+  "punch_phrases": [
+   "4 million",
+   "400 people"
+  ],
+  "pad_in": 0.07,
+  "pad_out": 0.1,
+  "punch_zoom": 0.82,
+  "target_face_frac": 0.3,
+  "face_fps": 4.0,
+  "min_face_coverage": 0.97,
+  "beat_seconds": 4.0,
+  "move_seconds": 0.55,
+  "drift_px": 14
+ },
+ "grade": {
+  "contrast": 1.08,
+  "saturation": 1.1,
+  "brightness": 0.012,
+  "vignette": 6.5,
+  "grain": 3
+ }
+}
