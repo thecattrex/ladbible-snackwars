@@ -173,34 +173,20 @@ def main() -> int:
     shots = framing.analyse(SRC, t0, t1, float(edit.get("face_fps", 4.0)), offset=OFF)
     store.artifact(cid, f"framing_{cid_clip}", shots)
 
-    def dead_spans(sh) -> list[list[float]]:
-        """Source spans whose *cropped* picture shows nobody.
+    def dead_spans(_shots) -> list[list[float]]:
+        """Stretches of the window where nothing is happening on screen.
 
-        Two ways a shot can be unusable: the camera is on an empty room, or the
-        9:16 box lands between two people on a wide shot. Both are the same thing
-        to the viewer, so both are measured here — on the crop itself, at a few
-        instants — and cut out of the plan.
+        Not "no face": the client's rule is that the frame must contain something
+        meaningful — a person, an animation on a monitor, a busy room. What is not
+        allowed is a black wall, an empty backdrop, or a camera swinging past a
+        curtain. That is measured on decoded pixels (contrast, edge detail,
+        colour, motion) at 4 fps over the whole window; faces are only one of the
+        ways a frame can qualify.
         """
-        out = []
-        for x in sh["shots"]:
-            a, b = max(x["t0"], t0), min(x["t1"], t1)
-            if b - a < 0.22:
-                continue
-            if not x["speaker"]:
-                out.append([round(a, 2), round(b, 2)])
-                continue
-            box = framing.crop_for(x, 3840, 2160,
-                                   target_face_frac=float(edit.get("target_face_frac", 0.30)))
-            probes = [a + (b - a) * k for k in (0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 0.97)]
-            misses = [t for t in probes if not cropaudit.face_in_crop(SRC, t, box, offset=OFF)]
-            if len(misses) == len(probes):
-                out.append([round(a, 2), round(b, 2)])
-            elif len(misses) >= 2:
-                # part of this piece is dead: cut the dead part, keep the rest
-                step = (b - a) / max(1, len(probes) - 1)
-                for t in misses:
-                    out.append([round(max(a, t - step), 2), round(min(b, t + step), 2)])
-        return out
+        samples = content.source_scan(SRC, t0, t1, offset=OFF,
+                                      cfg=brief.get("framing", {}).get("content"))
+        store.artifact(cid, f"content_{cid_clip}", {"samples": samples})
+        return content.runs(samples, "alive", False, min_len=0.40)
 
     dead = dead_spans(shots)
     if dead:
@@ -223,9 +209,17 @@ def main() -> int:
     if not plan["within_band"]:
         raise SystemExit(f"cut plan {plan['duration']}s outside band {plan['band']} "
                          f"after avoiding empty shots")
-    if shots["face_coverage"] < float(edit.get("min_face_coverage", 0.97)):
-        raise SystemExit(f"only {shots['face_coverage']:.0%} of the window has a face on "
-                         f"screen — reframe or move the moment")
+    # A window may legitimately have no face for a while (a screen insert, a busy
+    # room, a prop). What it may not have is dead frames: black wall, empty
+    # backdrop, nothing happening. That is the gate now.
+    live = content.source_scan(SRC, t0, t1, offset=OFF,
+                               cfg=brief.get("framing", {}).get("content"))
+    alive_ratio = sum(1 for v in live if v["alive"]) / max(1, len(live))
+    if alive_ratio < float(edit.get("min_alive_ratio", 0.90)):
+        raise SystemExit(f"only {alive_ratio:.0%} of the window has anything happening in "
+                         f"frame — move the moment")
+    store.artifact(cid, f"content_{cid_clip}", {"samples": live,
+                                                "alive_ratio": round(alive_ratio, 3)})
     shot_ok = [s for s in shots["shots"] if s["speaker"]]
     store.gate(cid, cid_clip, "FRAMING_VALID", True,
                f"{len(shot_ok)} shots, coverage {shots['face_coverage']:.0%}")
@@ -235,7 +229,10 @@ def main() -> int:
         inside = [sh for sh in shot_ok
                   if sh["t1"] > seg["src_in"] + 0.02 and sh["t0"] < seg["src_out"] - 0.02]
         if not inside:
-            raise SystemExit(f"segment {seg['index']} has no framed shot")
+            # no framed speaker here: the shot still shows something worth keeping,
+            # so it gets a piece with a neutral, centred frame
+            inside = [{"t0": seg["src_in"], "t1": seg["src_out"], "speaker": None,
+                       "kind": "CONTENT", "faces": 0}]
         seg_pieces = []
         for sh in inside:
             a0 = max(seg["src_in"], sh["t0"])

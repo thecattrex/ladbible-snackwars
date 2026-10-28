@@ -76,9 +76,9 @@ def loudness(p: Path) -> dict:
     return {"I": None, "TP": None}
 
 
-def visual(p: Path, wm_band=(.03, .16), area=(0.0, 1.0)) -> dict:
+def visual(p: Path, wm_band=(.03, .16), area=(0.0, 1.0), content_cfg=None) -> dict:
     import cv2
-    from orchestrator import framing as framing_mod
+    from orchestrator import framing as framing_mod, content
     w, h = 432, 768
     aw, ah = 1080, 1920
     y0c, y1c = int(area[0] * ah), int(area[1] * ah)
@@ -112,10 +112,23 @@ def visual(p: Path, wm_band=(.03, .16), area=(0.0, 1.0)) -> dict:
         return [tuple(int(v) for v in b) for b in det.detectMultiScale(g, 1.08, 4, minSize=(18, 18))]
     faces, wm, black, centers, clipped = 0, [], 0, [], 0
     faceless_runs, cur = [], None
+    dead_runs, cur_dead, prev = [], None, None
     for i in range(n):
         bgr = np.frombuffer(raw[i * w * h * 3:(i + 1) * w * h * 3], np.uint8).reshape(h, w, 3)
         g = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
         boxes = find_faces(bgr)
+
+        # "is anything happening here?" — a face is one answer, real detail or
+        # movement in the frame is another; a black wall or an empty backdrop is
+        # the only wrong answer
+        verdict = content.judge(bgr, prev, face=bool(boxes), cfg=content_cfg)
+        prev = bgr
+        if verdict["alive"]:
+            if cur_dead is not None:
+                dead_runs.append((cur_dead, i / 4)); cur_dead = None
+        else:
+            cur_dead = cur_dead if cur_dead is not None else i / 4
+
         faces += bool(len(boxes))
         if not len(boxes):
             cur = cur if cur is not None else i / 4
@@ -133,11 +146,18 @@ def visual(p: Path, wm_band=(.03, .16), area=(0.0, 1.0)) -> dict:
         black += bool(float(g.mean()) < 8)
     if cur is not None:
         faceless_runs.append((cur, n / 4))
+    if cur_dead is not None:
+        dead_runs.append((cur_dead, n / 4))
     longest = max([b - a for a, b in faceless_runs], default=0.0)
     first_two = [r for r in faceless_runs if r[0] < 2.0]
+    dead_longest = max([b - a for a, b in dead_runs], default=0.0)
+    dead_first = [r for r in dead_runs if r[0] < 2.0]
     return {"face_center_median": round(float(np.median(centers)), 3) if centers else None,
             "faces_clipped_at_edge": round(clipped / max(1, len(centers)), 3),
             "faces": round(faces / n, 3),
+            "alive": round(1 - sum(b - a for a, b in dead_runs) / max(1e-6, n / 4), 3),
+            "longest_dead_run_s": round(dead_longest, 2),
+            "dead_in_first_2s": bool(dead_first),
             "longest_faceless_run_s": round(longest, 2),
             "faceless_in_first_2s": bool(first_two),
             "watermark": round(float(np.mean([x > .004 for x in wm])), 3),
@@ -246,7 +266,7 @@ def main() -> int:
         band = (y0 / 1920, min(1.0, (y0 + wm_h) / 1920))
     # full-bleed delivery: the picture is the whole frame, so the QA crop covers all of it
     area = (0.0, 1.0)
-    info, loud, vis, fid = probe(out), loudness(out), visual(out, band, area), fidelity(clip, cid)
+    info, loud, vis, fid = probe(out), loudness(out), visual(out, band, area, content_cfg=brief.get("framing", {}).get("content")), fidelity(clip, cid)
     integ = integrity(out)
     at = brief.get("audio_targets", {})
     checks = {
@@ -256,15 +276,18 @@ def main() -> int:
         "audio_present": info["audio"] is not None,
         "loudness_ok": loud["I"] is not None and abs(loud["I"] - at.get("lufs", -16)) <= 2.0,
         "peak_ok": loud["TP"] is not None and loud["TP"] < at.get("true_peak", -1) + .5,
-        "speaker_present": vis["faces"] >= brief.get("framing", {}).get("face_presence_min", .5),
-        "speaker_framed": (vis["face_center_median"] is not None
-                           and .28 <= vis["face_center_median"] <= .72
-                           and vis["faces_clipped_at_edge"] <= .05),
+        # a face is not required in every second; what is required is that the
+        # frame holds something worth watching (person, screen, action)
+        "meaningful_content_throughout": vis["longest_dead_run_s"] <= 0.5,
+        "meaningful_content_in_hook": not vis["dead_in_first_2s"],
+        "speaker_framed": (vis["faces"] < 0.2 or
+                           (vis["face_center_median"] is not None
+                            and .28 <= vis["face_center_median"] <= .72
+                            and vis["faces_clipped_at_edge"] <= .05)),
         "watermark_on_screen": vis["watermark"] >= .9,
         "no_black_frames": vis["black_frames"] <= .02,
         "decodes_clean": integ["decode_errors"] == 0,
-        "speaker_on_screen_throughout": vis["longest_faceless_run_s"] <= 0.5,
-        "speaker_on_screen_in_hook": not vis["faceless_in_first_2s"],
+
         "picture_and_sound_same_length": abs((integ.get("duration") or 0) - info["duration"]) <= 0.05,
         "opening_is_spoken": fid["opening_spoken_in_clip"],
         "hook_numbers_supported": fid["hook_numbers_supported"],

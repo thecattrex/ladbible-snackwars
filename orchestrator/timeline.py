@@ -129,6 +129,16 @@ def build(words, t0, t1, cfg=None):
         r["src_in"] = round(max(r["src_in"] - pad_in, min(lo, r["src_in"])), 3)
         r["src_out"] = round(min(r["src_out"] + pad_out, max(hi, r["src_out"])), 3)
 
+    # a pad handle must never reach back into a span the picture cannot show: cut
+    # handles short at the dead edge rather than smuggling two frames of wall in
+    for r in runs:
+        for x0, x1 in avoid:
+            if x0 < r["src_in"] < x1:
+                r["src_in"] = round(x1, 3)
+            if x0 < r["src_out"] < x1:
+                r["src_out"] = round(x0, 3)
+    runs = [r for r in runs if r["src_out"] - r["src_in"] > 0.05]
+
     segs, out_t = [], 0.0
     for i, r in enumerate(runs):
         d = r["src_out"] - r["src_in"]

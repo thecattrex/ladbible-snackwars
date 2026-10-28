@@ -48,3 +48,11 @@ bot cannot switch them back on by adding a config key.
 D9 reports measured values (loudness, true peak, decode errors, faces per frame, watermark
 probe, picture duration against the timeline). A check that could not be measured is
 reported as unperformed, never as passed.
+
+## R7 - meaningful frame, not "a face in every frame"
+The client's rule is that something must be happening in the frame: a person, a screen
+playing, a busy room, a reaction. A dead frame (black wall, plain backdrop, the camera
+passing the curtain) is the defect. Measured by `orchestrator/content.py` on decoded
+pixels; D6 removes dead spans from the plan, D9 fails a clip with more than half a second
+of nothing. Tests: `tools/test_content.py`, `tools/test_meaningful_frame.py`,
+`tools/test_pipeline_content.py`.

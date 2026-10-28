@@ -566,6 +566,14 @@ Write a short style brief: intended audience, pace, caption style, color directi
   few frames per second is a summary; when the source changes setup between two samples
   the planned crop lands on an empty chair or desk. Re-detect on the actual decoded
   window and move the box onto the nearest face.
+- **A meaningful frame, not a face in every frame.** Every second of the deliverable must
+  show something the viewer can watch: a person speaking, an animation playing on a
+  monitor, a room full of people working, a reaction, a prop in use. A *dead* frame is the
+  defect — a black wall, a plain empty backdrop, or the sweep where the camera passes a
+  curtain between two people. A face-less but busy frame is allowed and should not be cut
+  merely for lacking a head. Measure it on decoded pixels (contrast, edge detail, colour
+  spread, motion, plus face detection), cut dead spans out of the timeline, and let a cut
+  handle never reach back into one.
 - Delivery is full-bleed for the requested ratio. Do not put the picture inside a
   smaller frame with blank bands; that reads as a compressed clip.
 - Review tracking at shot boundaries and occlusions; repair bad keyframes manually when the tool permits.
@@ -784,7 +792,8 @@ At minimum:
     audio is heard as the clip dragging behind the voice); cut positions on the plan;
     decode-error count from a full pass; EBU integrated loudness and true peak;
     watermark present on the sampled frames (colour probe, not eyeballing); longest run
-    with no face on screen; any text overlapping a face; nearest-face crop audit result.
+    in which nothing is happening in the frame (dead-frame measure, not "no face"); any
+    text overlapping a face; nearest-face crop audit result.
 
 Default delivery can be 1080×1920 H.264 MP4 with AAC audio, source-appropriate frame rate, and color handling suited to the brief. Do not silently create HDR/SDR conversion errors or claim a cropped low-resolution source has native high-resolution detail.
 

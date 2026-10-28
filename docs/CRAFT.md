@@ -20,7 +20,17 @@ Every rule below was confirmed on a rendered clip and measured in D9. The master
   downstream knows the media was cut.
 
 ## 2. Camera — follow the speaker, keep the frame alive
-- One crop per shot, placed on the person who is speaking.
+- **The frame must contain something meaningful, every second.** A person talking, an
+  animation playing on a monitor, a busy room, a reaction, a prop in use — anything that
+  is actually happening. What is banned is a *dead* frame: black wall, plain studio
+  backdrop, or the moment the camera swings past the curtain between two people.
+- A face is **not** required in every second. The test is measured on decoded pixels
+  (`orchestrator/content.py`: contrast, edge detail, colour spread, motion, plus face
+  detection), not on "is there a head in this shot".
+- When a stretch is dead, an editor cuts it out — so does the plan: D6 scans the window at
+  4 fps, drops dead spans from the timeline (`timeline.build(..., avoid=...)`), extends the
+  window to stay inside the clip band, and never lets a cut handle reach back into one.
+- One crop per shot, placed on the person who is speaking when there is one.
 - A wide two-shot is a **moving window**: ease-out glide (~0.5 s) from the speaker who
   finished to the one who answers, plus a slow drift (14 px) on static pieces. A locked-off
   crop per shot reads as a photo slideshow.
@@ -30,8 +40,9 @@ Every rule below was confirmed on a rendered clip and measured in D9. The master
   the face (a full-height slice leaves dead curtain above both heads), 5 px brand-colour
   divider that reads as a deliberate lens line.
 - **Crop audit before render**: the face track is a summary, so every planned box is
-  re-checked on decoded frames and moved onto the nearest face. Split a piece where the
-  face jumps; never split anything shorter than 0.6 s.
+  re-checked on decoded frames and moved onto the nearest face. A stretch with no face is
+  allowed as long as something is happening in it — its planned framing stands.
+  Never split anything shorter than 0.6 s.
 - **Full-bleed.** The picture fills 1080×1920. No bands, no smaller frame inside the frame.
 
 ## 3. Graphics — type is the graphic
@@ -79,12 +90,16 @@ Every rule below was confirmed on a rendered clip and measured in D9. The master
   after ~12 s.
 - 1080×1920 H.264, 30 fps, AAC, `+faststart`, frame-locked to the timeline.
 - QA with instruments, not opinions: EBU loudness and true peak, full decode-error pass,
-  watermark colour probe, faces per frame and longest faceless run, text-over-face check,
-  crop-audit result. Report the numbers; never claim a check that was not run.
+  watermark colour probe, text-over-face check, crop-audit result, and the content
+  measure: `alive` ratio, longest dead run, whether the hook window is alive. A clip fails
+  if more than half a second of it shows nothing happening — a face is not required.
+  Report the numbers; never claim a check that was not run.
 
 ## 7. Banned — rejected by the client or proven wrong in execution
 - Letterbox / black bands ("looks compressed"); the band module is deleted, not disabled.
 - Locked-off crop per shot; cutting between faces inside one wide shot.
+- A dead second: black wall, empty backdrop, camera swinging past a curtain. A face-less
+  but busy frame (screen playing, room full of people working) is fine; emptiness is not.
 - Icon sets, dotted grids, illustrated banknotes, decorative stock photos.
 - Numbers that count up from zero.
 - A synthesised music bed under speech.

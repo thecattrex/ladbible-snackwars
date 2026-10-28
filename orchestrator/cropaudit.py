@@ -169,10 +169,14 @@ def audit(src: Path, pieces, fps: float = 4.0, offset: float = 0.0):
                     chosen = cand
                     break
             if chosen is None:
-                part["dead"] = True
-                report["dead"] = report.get("dead", 0) + 1
+                # Nobody in this stretch — which is allowed: the client's rule is
+                # that the frame must hold something meaningful, not that a person
+                # must always be in it. The planned framing stands, and the content
+                # judge (D6/D9) is what decides whether this second earns its place.
+                report["no_face"] += 1
                 report["notes"].append(f"{h0:.2f}-{h1:.2f}: no face inside any framing — "
-                                       f"cut this span out of the plan")
+                                       f"kept the planned box")
+                part["audit"] = "no_face"
                 fixed.append(part)
                 continue
             if chosen != box:
