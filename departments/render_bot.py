@@ -341,6 +341,8 @@ def main() -> int:
     ass = WORK / f"{clip_id}.ass"
     build_ass(ass, words, t0, t1, hook)
     wm = ROOT / CAMP["watermark"]["file"]
+    if not wm.exists():
+        raise SystemExit(f"watermark asset missing: {wm} (campaign contract requires it)")
 
     fc = ["[1:a]loudnorm=I=%s:TP=%s:LRA=11[main]" % (CAMP["audio"]["lufs"], CAMP["audio"]["tp"]),
           f"[2:a]volume={CAMP['audio']['music_gain_db']}dB,atrim=0:{dur},asetpts=N/SR/TB[bed]"]
