@@ -42,3 +42,24 @@ Locked deliverable: `DEMO_c557_v6.mp4` (30.13 s, QA PASS, gate `QA_APPROVED` in
 - Two bugs the instrumentation caught that no one had reported: the watermark
   dying after 12 s (one-frame still + `overlay` EOF) and 0.3 s of empty desk in
   the middle of the clip (face track disagreeing with a real setup change).
+
+## Added on my own — not taught, kept because it earned its place
+
+These were not instructions. They are the pieces I put in and the client approved
+in v6. Listed with the thing that proves each one is doing work.
+
+| # | What I added | Where | Evidence it works |
+|---|--------------|-------|-------------------|
+| 1 | **Speaker-follow framing** — every shot is reframed onto whoever is talking, decided from a YuNet face track at 4 fps over a 960x540 proxy, not from a fixed crop | `orchestrator/framing.py`, `d6_edit.py` | `face_coverage 1.001`; D9 `faces 0.975`, `faces_clipped_at_edge 0.0` |
+| 2 | **Crop audit** — the face track is a summary, so every planned crop is re-checked against real decoded frames and moved onto the nearest face before render | `orchestrator/cropaudit.py` | caught 2 crops that were on nobody (0 % of frames) and killed 0.3 s of empty desk at 15.4 s |
+| 3 | **Moving-window camera** — punch-ins plus a 0.55 s ease-out glide and a 14 px drift, so no piece is a frozen frame | `d6_edit.py` | 9 pieces, 4 punch-ins, 4 glides, 5 drifts |
+| 4 | **Split frame with a lens** — when both men talk at once, two panels with a 5 px lime divider; panels zoomed to the face so no dead curtain band above the heads | `d6_edit.py` (source-ordered rebuild) | `split_frame {src:[2016.9, 2019.09], left_cx .154, right_cx .709}`, verified frame by frame |
+| 5 | **Beat structure** — a long take is split at its midpoint into a punch-in so the frame changes size every ~4.5 s | `d6_edit.py` (`beat_seconds`) | 4 punch-ins on a 30 s clip |
+| 6 | **Caption typography** — 3-word groups, Archivo Black, keyword in brand lime with a 108 % pop, outline only (no `\shad`), positioned to clear the source's own lower third | `d8_captions.py` | 0 text-over-face hits in QA, readable muted |
+| 7 | **Card timing editorially, not on a metronome** — seven cards with gaps, each card cleared from the caption lane | `state/.../graphics_plan.json` | card windows 4.15–7.55 / 8.6–10.9 / 12.6–14.9 / 16.4–19.1 / 19.9–22.9 / 23.4–26.4 / 27.0–29.4 |
+| 8 | **Colour pass** — contrast 1.08, saturation 1.10, vignette, light grain on picture *and* cards so graphics sit in the same film | `d8_captions.py` grade block | no card reads as a pasted panel |
+| 9 | **Sound design discipline** — no bed, denoised dialogue (`highpass 72`, `afftdn −28`), 8–9 selective cues with impacts at −21 dB, loudness to −16 LUFS / −1 dBTP | `d7_audio.py`, `orchestrator/sfx.py` | −16.03 LUFS, −5.04 dBTP, 0 decode errors |
+| 10 | **QA instruments instead of opinions** — lime-pixel watermark probe, 4 fps decode-error pass, EBU loudness, faceless-run detector, text-over-face check | `departments/d9_qa.py` | the watermark probe is what found the watermark dying at 12 s |
+| 11 | **Frame-locked EDL as the single source of truth** — picture, audio and captions all read the same locked timeline; any later duration change invalidates the layers by design | `orchestrator/timeline.py`, `artifacts/edl_picture_*.json` | audio matches the mix at 0 ms; picture 30.13 s = timeline |
+| 12 | **Gate + verdict system** — SOURCE_VALID → MOMENT_VALID → FRAMING_VALID → STORY_LOCKED → TIMELINE_LOCKED → RENDER_COMPLETE → QA_APPROVED → DELIVERED, with PASS / REVISE / REJECT / BLOCKED and a 2-revision cap | `orchestrator/store.py`, `queue.py`, `boss.py` | c557 went 7 QA revisions before PASS; nothing shipped on a claim |
+| 13 | **Campaign isolation and purge** — one campaign's source, overrides and renders on disk at a time; media purged after delivery, lessons kept | `orchestrator/isolation.py`, `purge.py` | repo 1.1 GB → 62 MB mid-campaign |
