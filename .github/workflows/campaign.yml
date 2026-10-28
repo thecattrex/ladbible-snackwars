@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ok: ${{ steps.v.outputs.ok }}
-      clips: ${{ steps.v.outputs.clips }}
+      mode: ${{ steps.v.outputs.mode }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,9 +51,10 @@ jobs:
           if mode == "RUN_CAMPAIGN" and b["source"]["rights"] not in ("OWNED","LICENSED","OTHER_AUTHORIZED_BASIS"):
               sys.exit("source rights not stated")
           print(f"::notice::mode={mode} clips={b['target_clips']} length={lo}-{hi}s")
-          open(os.environ["GITHUB_OUTPUT"], "a").write(f"ok=1\nclips={b['target_clips']}\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"ok=1\nmode={mode}\n")
           PY
-      - if: env.MODE == 'DESIGN_ONLY'
+      - if: steps.v.outputs.mode == 'DESIGN_ONLY'
         run: |
           echo "DESIGN_ONLY: the brief is valid. No media job was started, and none is implied."
           echo "Set mode=RUN_CAMPAIGN to prepare, or BUILD_WORKFLOW to validate orchestration."
@@ -61,7 +62,7 @@ jobs:
   d1_source:
     name: d1-source
     needs: brief
-    if: needs.brief.outputs.ok == '1' && env.MODE != 'DESIGN_ONLY'
+    if: needs.brief.outputs.ok == '1' && needs.brief.outputs.mode != 'DESIGN_ONLY'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -167,6 +168,8 @@ jobs:
     name: d5-hooks
     needs: d4_moments
     runs-on: ubuntu-latest
+    outputs:
+      clips: ${{ steps.list.outputs.clips }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -174,6 +177,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: d4, path: . }
       - run: python3 -u departments/d5_hooks.py "$CAMPAIGN"
+      - id: list
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          p = f"state/{os.environ['CAMPAIGN']}/artifacts/portfolio.v1.json"
+          sel = json.load(open(p))["payload"]["selected"]
+          print("clips=" + json.dumps([c["candidate_id"] for c in sel]))
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: d5

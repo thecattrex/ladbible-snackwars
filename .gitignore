@@ -1,7 +1,5 @@
-src/
-clips*/
-references/
-assets/bot_status/
-assets/qc_*.jpg
-assets/_ep*/
+# runtime state is produced per run, never committed
+state/
+work/
 __pycache__/
+*.pyc
