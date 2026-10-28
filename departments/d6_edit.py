@@ -191,9 +191,15 @@ def main() -> int:
                 continue
             box = framing.crop_for(x, 3840, 2160,
                                    target_face_frac=float(edit.get("target_face_frac", 0.30)))
-            probes = [a + (b - a) * k for k in (0.2, 0.45, 0.7, 0.9)]
-            if not any(cropaudit.face_in_crop(SRC, t, box, offset=OFF) for t in probes):
+            probes = [a + (b - a) * k for k in (0.1, 0.25, 0.4, 0.55, 0.7, 0.85, 0.97)]
+            misses = [t for t in probes if not cropaudit.face_in_crop(SRC, t, box, offset=OFF)]
+            if len(misses) == len(probes):
                 out.append([round(a, 2), round(b, 2)])
+            elif len(misses) >= 2:
+                # part of this piece is dead: cut the dead part, keep the rest
+                step = (b - a) / max(1, len(probes) - 1)
+                for t in misses:
+                    out.append([round(max(a, t - step), 2), round(min(b, t + step), 2)])
         return out
 
     dead = dead_spans(shots)
