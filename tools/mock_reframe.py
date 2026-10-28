@@ -47,6 +47,41 @@ def centred(draw, xy, text, f, fill, shadow=True, tracking=0):
     draw.text((x, xy[1]), text, font=f, fill=fill)
 
 
+def twitch_banner() -> Image.Image:
+    """A stand-in for the streamer's Twitch banner: brand purple, handle, stripes.
+
+    The real banner is in the campaign's reference file (locked until the campaign
+    is joined), so this placeholder only proves the layout and the safe area for
+    the text; the finished clips will use the supplied image.
+    """
+    img = Image.new("RGB", (W, H), (24, 12, 38))
+    d = ImageDraw.Draw(img)
+    for i in range(-H, W, 90):                       # diagonal brand stripes
+        d.line([(i, 0), (i + H, H)], fill=(34, 18, 54), width=34)
+    d.rectangle([0, 0, W, 300], fill=(145, 70, 255))  # twitch purple band
+    d.rectangle([0, H - 300, W, H], fill=(145, 70, 255))
+    centred(d, (W / 2, 34), "IRUBYANA", font("Anton-Regular.ttf", 84), (255, 255, 255), tracking=4)
+    return img
+
+
+def banner_layout(src: Image.Image) -> Image.Image:
+    """The campaign's own layout: banner behind, the 16:9 clip full width on top.
+
+    The banner is artwork we do not control, so the hook and the captions never sit
+    straight on it: each gets its own plate, the way a lower third does. That keeps
+    the text readable whatever the banner looks like underneath.
+    """
+    canvas = twitch_banner()
+    inner_w = W
+    inner_h = int(inner_w * src.size[1] / src.size[0])          # 1080x608
+    y = 700
+    canvas.paste(src.resize((inner_w, inner_h), Image.LANCZOS), (0, y))
+    d = ImageDraw.Draw(canvas)
+    d.rectangle([0, y - 4, W, y], fill=(0, 0, 0))
+    d.rectangle([0, y + inner_h, W, y + inner_h + 4], fill=(0, 0, 0))
+    return canvas
+
+
 def stream_frame(w=1920, h=1080) -> Image.Image:
     """A 16:9 livestream-looking frame: game, facecam, chat."""
     img = Image.new("RGB", (w, h), (18, 16, 28))
@@ -157,6 +192,24 @@ def decorate(img: Image.Image, hook: str, hook_sub: str, caption_a: str,
     return img
 
 
+def banner_text(img: Image.Image) -> Image.Image:
+    """Text on its own plate, clear of the banner artwork."""
+    d = ImageDraw.Draw(img, "RGBA")
+    d.rounded_rectangle([40, 150, W - 40, 520], radius=26, fill=(8, 8, 12, 215))
+    centred(d, (W / 2, 175), "HALLOWEEN PARTY", font("Anton-Regular.ttf", 92), (255, 255, 255), tracking=2)
+    centred(d, (W / 2, 300), "GONE WRONG", font("ArchivoBlack-Regular.ttf", 54), LIME, tracking=4)
+    centred(d, (W / 2, 392), "clip 1 of 20", font("Inter.ttf", 34), (200, 200, 215))
+
+    d.rounded_rectangle([40, 1370, W - 40, 1590], radius=26, fill=(8, 8, 12, 210))
+    centred(d, (W / 2, 1392), "chat is dead", font("ArchivoBlack-Regular.ttf", 62), (255, 255, 255))
+    centred(d, (W / 2, 1478), "lol", font("ArchivoBlack-Regular.ttf", 62), LIME)
+
+    d.rounded_rectangle([40, 1718, W - 40, 1812], radius=20, fill=(8, 8, 12, 210))
+    centred(d, (W / 2, 1738), "@Irubyana   #irubyana   #twitch   #TwitchLivestream",
+            font("ArchivoBlack-Regular.ttf", 32), (235, 235, 245))
+    return img
+
+
 def label(img: Image.Image, text: str) -> Image.Image:
     d = ImageDraw.Draw(img, "RGBA")
     d.rectangle([0, 0, W, 78], fill=(0, 0, 0, 210))
@@ -180,6 +233,9 @@ def main() -> int:
     c = decorate(letterbox(src, "blur", blur=True), "HALLOWEEN PARTY", "GONE WRONG",
                  "chat is dead", "lol", "@Irubyana  #irubyana #twitch", band_text=True)
     c.save(OUT / "C_169_blurred_bars.jpg", quality=92)
+
+    d = banner_text(banner_layout(src))
+    d.save(OUT / "D_169_twitch_banner.jpg", quality=92)
 
     # comparison sheet: the three side by side, labelled
     sheet = Image.new("RGB", (W * 3 // 2, int(H / 2) + 40), (10, 10, 12))
