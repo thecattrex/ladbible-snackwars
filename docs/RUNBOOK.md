@@ -47,3 +47,28 @@ python3 orchestrator/purge.py campaign-a --confirmed-perfect
 Purge deletes the brief, state, transcripts, renders, clips and stills for that
 campaign, and keeps `lessons/campaign-a.md` + the system. The lesson file is
 created before anything is removed.
+
+## 7. Running one clip by hand (demo gate)
+
+The demo gate exists so editing and hook quality are approved before a batch run.
+One clip, one pass, no shortcuts:
+
+```bash
+cd ~/clipper
+export MEDIA_ROOT=/var/tmp                       # media lives outside the repo
+python3 departments/d1_source.py  <cid>
+python3 departments/d2_transcribe.py <cid> --shard N   # or d2_ingest_words.py
+python3 departments/d2_transcribe.py <cid> --merge
+python3 departments/d3_index.py   <cid> --sample 30 --cuts-window 4
+python3 departments/d4_moments.py <cid> --select --pin <card_id>
+python3 departments/d5_hooks.py   <cid>
+python3 departments/d6_edit.py    <cid> --clip <card_id>
+python3 departments/d7_audio.py   <cid> --clip <card_id>
+python3 departments/d8_captions.py <cid> --clip <card_id>
+python3 departments/d9_qa.py      <cid> --clip <card_id>
+```
+
+Editorial decisions live in `state/<cid>/edit_overrides.json` (window, filler to
+drop, punch-ins, pause length) and `state/<cid>/hook_overrides.json` (hook card
+text). Both stay local; the rubric and QA still run against them, so an override
+that breaks source fidelity fails review instead of skipping it.

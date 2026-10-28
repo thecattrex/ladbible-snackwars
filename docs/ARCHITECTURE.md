@@ -46,3 +46,24 @@ D1 → D2 (×N shards) → D2 merge → D3 → D4 (--select) → D5
 ```
 
 Mode gate: `DESIGN_ONLY` validates the brief and starts no media job.
+
+## Timeline — one cut plan, every layer
+
+`orchestrator/timeline.py` is the only place a clip's edit is decided. It turns a
+Moment Card window into a list of kept source segments: each cut lands between
+sentences, pure filler is dropped only when the editor authorises it, pauses are
+closed to a fixed gap, and every cut keeps 70 ms / 100 ms of air so a word onset
+or release is never shaved off. It also provides `remap_words()`, so captions and
+SFX are placed on the output clock instead of the source clock.
+
+- D6 renders one fragment per segment (crop from a single recurring-face
+  decision, punch-in on the segments the editor flags) and concatenates.
+- D7 rebuilds the dialogue from the same segments, then mixes bed and SFX with
+  two-stage gain: dialogue normalised with headroom, finished mix normalised to
+  the campaign target with a true-peak ceiling.
+- D8 retimes every caption word through the plan, so picture, dialogue and text
+  cannot drift.
+
+A segment is always a contiguous run of the original audio: the system can drop
+words by removing a whole sentence, but it can never re-order or splice a
+sentence into a new one.

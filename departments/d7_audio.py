@@ -26,7 +26,10 @@ sys.path.insert(0, str(ROOT))
 from orchestrator import store  # noqa: E402
 
 FF = imageio_ffmpeg.get_ffmpeg_exe()
-SRC = Path("/tmp/src.mp4")
+import os
+from pathlib import Path
+MEDIA = Path(os.environ.get("MEDIA_ROOT", "/var/tmp"))
+SRC = MEDIA / "src.mp4"
 
 
 def make_sfx(dest: Path, kind: str, sr: int = 44100):
@@ -75,14 +78,26 @@ def main() -> int:
 
     edl = store.read_json(cid, f"artifacts/edl_picture_{clip}.v1.json")["payload"]
     dur = edl["events"][-1]["output_out"]
-    card = next(c for c in store.read_json(cid, "artifacts/portfolio.v1.json")["payload"]["selected"]
-                if c["candidate_id"] == clip)
-    t0 = card["t0"]
+    events = edl["events"]
 
     work = store.path(cid, f"work/{clip}")
     dialogue = work.with_name(f"{clip}_dialogue.wav")
-    subprocess.run([FF, "-nostdin", "-v", "error", "-y", "-ss", f"{t0:.3f}", "-t", f"{dur:.3f}",
-                    "-i", str(SRC), "-vn", "-ac", "1", "-ar", "44100", str(dialogue)], check=True)
+    # dialogue is rebuilt segment by segment on the same boundaries as the
+    # picture, so a cut can never land mid-word on one layer only
+    graph, labels = [], []
+    for i, e in enumerate(events):
+        a, b = e["source_in"], e["source_out"]
+        graph.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=N/SR/TB[d{i}]")
+        labels.append(f"[d{i}]")
+        if i < len(events) - 1:
+            gap = events[i + 1]["output_in"] - e["output_out"]
+            if gap > 0.001:
+                graph.append(f"aevalsrc=0:d={gap:.3f}:s=44100:c=mono[g{i}]")
+                labels.append(f"[g{i}]")
+    graph.append(f"{''.join(labels)}concat=n={len(labels)}:v=0:a=1[dia]")
+    subprocess.run([FF, "-nostdin", "-v", "error", "-y", "-i", str(SRC),
+                    "-filter_complex", ";".join(graph), "-map", "[dia]",
+                    "-ac", "1", "-ar", "44100", str(dialogue)], check=True)
 
     bed = work.with_name(f"{clip}_bed.wav"); music_bed(bed, dur)
     whoosh = work.with_name("whoosh.wav"); make_sfx(whoosh, "whoosh")
@@ -96,19 +111,23 @@ def main() -> int:
         cues.append({"cue": f"whoosh_{i}", "asset": "generated whoosh", "provenance": "synthesised in D7",
                      "gain_db": at.get("whoosh_gain_db", -14), "at": round(ct, 2),
                      "purpose": "mark a camera cut"})
-    words = store.read_json(cid, "artifacts/transcript.v1.json")["payload"]["words"]
     import re
-    num = next((w["t"] - t0 for w in words if t0 <= w["t"] < t0 + dur and re.search(r"\d", w["w"])), None)
-    if num and num > 0.5:
-        cues.append({"cue": "thump", "asset": "generated low impact", "provenance": "synthesised in D7",
-                     "gain_db": at.get("thump_gain_db", -12), "at": round(num, 2),
-                     "purpose": "land the number being said"})
+    for j, e in enumerate(events):
+        if e.get("purpose", "").startswith("punch-in") and j > 0:
+            cues.append({"cue": f"thump_{j}", "asset": "generated low impact",
+                         "provenance": "synthesised in D7",
+                         "gain_db": at.get("thump_gain_db", -12),
+                         "at": round(e["output_in"] + 0.10, 2),
+                         "purpose": "land the number being said"})
     cues.append({"cue": "riser", "asset": "generated riser", "provenance": "synthesised in D7",
                  "gain_db": -18, "at": 0.0, "purpose": "carry the hook card only"})
 
     inputs = ["-i", str(dialogue), "-i", str(bed)]
-    filters = [f"[0:a]loudnorm=I={lufs}:TP={tp}:LRA=11[main]",
-               f"[1:a]atrim=0:{dur},asetpts=N/SR/TB[bed]"]
+    # two stage gain: the dialogue is normalised with headroom so the bed and SFX
+    # can sit on top without ever pushing the mix over full scale; the finished
+    # mix is then normalised to the campaign target with a true-peak ceiling.
+    filters = [f"[0:a]loudnorm=I={lufs - 5}:TP={tp - 5}:LRA=11[main]",
+               f"[1:a]atrim=0:{dur},asetpts=N/SR/TB,aresample=48000[bed]"]
     mix = ["[main]", "[bed]"]
     idx = 2
     for c in cues:
@@ -117,7 +136,7 @@ def main() -> int:
             ms = int(c["at"] * 1000)
             filters.append(f"[{idx}:a]adelay={ms}|{ms},volume={c['gain_db']}dB[w{idx}]")
             mix.append(f"[w{idx}]"); idx += 1
-        elif c["cue"] == "thump":
+        elif c["cue"] == "thump" or c["cue"].startswith("thump_"):
             inputs += ["-i", str(thump)]
             ms = int(c["at"] * 1000)
             filters.append(f"[{idx}:a]adelay={ms}|{ms},volume={c['gain_db']}dB[t]")
@@ -126,12 +145,15 @@ def main() -> int:
             inputs += ["-i", str(riser)]
             filters.append(f"[{idx}:a]volume={c['gain_db']}dB,atrim=0:0.9[r]")
             mix.append("[r]"); idx += 1
-    filters.append(f"{''.join(mix)}amix=inputs={len(mix)}:duration=first:normalize=0[aout]")
+    filters.append(f"{''.join(mix)}amix=inputs={len(mix)}:duration=first:normalize=0,"
+                   f"loudnorm=I={lufs}:TP={tp}:LRA=11,alimiter=limit=0.89:level=false,"
+                   f"aresample=48000[aout]")
 
     audio = store.path(cid, f"render/{clip}_audio.m4a")
     subprocess.run([FF, "-nostdin", "-v", "error", "-y", *inputs,
                     "-filter_complex", ";".join(filters), "-map", "[aout]",
-                    "-c:a", "aac", "-b:a", "192k", str(audio)], check=True)
+                    "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                    "-ac", "2", str(audio)], check=True)
     store.artifact(cid, f"cue_sheet_{clip}", {"clip": clip, "duration": dur,
                                               "target": {"lufs": lufs, "true_peak": tp},
                                               "cues": cues})

@@ -75,6 +75,8 @@ def main() -> int:
     ap.add_argument("campaign_id")
     ap.add_argument("--lens", default=None)
     ap.add_argument("--select", action="store_true")
+    ap.add_argument("--pin", nargs="*", default=[], help="candidate ids the editor "
+                    "has already vetted; they are placed in the portfolio first")
     a = ap.parse_args()
     cid = a.campaign_id
     brief = store.validate_brief(cid)
@@ -147,6 +149,13 @@ def main() -> int:
     if a.select:
         want = brief["target_clips"]
         picked, used_takeaways = [], []
+        by_id = {c["candidate_id"]: c for c in dedup}
+        for pid in a.pin:
+            c = by_id.get(pid)
+            if c is None:
+                raise SystemExit(f"pinned candidate {pid} not in the register")
+            picked.append(c)
+            used_takeaways.append(c["takeaway"][:60])
         for c in dedup:
             if len(picked) >= want:
                 break

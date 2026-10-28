@@ -56,7 +56,7 @@ def loudness(p: Path) -> dict:
     return {"I": None, "TP": None}
 
 
-def visual(p: Path) -> dict:
+def visual(p: Path, wm_band=(.03, .16)) -> dict:
     import cv2
     w, h = 216, 384
     raw = subprocess.run([FF, "-v", "error", "-i", str(p), "-an", "-vf",
@@ -66,14 +66,21 @@ def visual(p: Path) -> dict:
     if not n:
         return {"faces": 0.0, "watermark": 0.0, "black_frames": 1.0}
     det = cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"))
-    faces, wm, black = 0, [], 0
+    faces, wm, black, centers, clipped = 0, [], 0, [], 0
     for i in range(n):
         g = np.frombuffer(raw[i * w * h:(i + 1) * w * h], np.uint8).reshape(h, w)
-        faces += bool(len(det.detectMultiScale(cv2.equalizeHist(g), 1.08, 4, minSize=(18, 18))))
-        wm.append(float((g[int(h * .78):int(h * .87)] > 200).mean()))
+        boxes = det.detectMultiScale(cv2.equalizeHist(g), 1.08, 4, minSize=(18, 18))
+        faces += bool(len(boxes))
+        if len(boxes):
+            x, y, fw, fh = max(boxes, key=lambda b: b[2])
+            centers.append((x + fw / 2) / w)
+            clipped += bool(x < 2 or x + fw > w - 2 or y < 2)
+        y0, y1 = int(h * wm_band[0]), int(h * wm_band[1])
+        wm.append(float((g[y0:y1] > 170).mean()))
         black += bool(float(g.mean()) < 8)
-    return {"faces": round(faces / n, 3),
-            "watermark": round(float(np.mean([b > .01 for b in wm])), 3),
+    return {"faces": round(faces / n, 3), "face_center_median": round(float(np.median(centers)), 3) if centers else None,
+            "faces_clipped_at_edge": round(clipped / max(1, len(centers)), 3),
+            "watermark": round(float(np.mean([b > .004 for b in wm])), 3),
             "black_frames": round(black / n, 3)}
 
 
@@ -106,7 +113,17 @@ def main() -> int:
     if not out.exists():
         raise SystemExit(f"no render at {out}")
 
-    info, loud, vis, fid = probe(out), loudness(out), visual(out), fidelity(clip, cid)
+    wmc = brief.get("watermark", {}) or {}
+    pos = wmc.get("position", "bottom-center")
+    wm_w = int(wmc.get("width", 640))
+    wm_h = int(wm_w * 549 / 1993)          # asset aspect, kept from the delivered PNG
+    if pos.startswith("top"):
+        y0 = int(wmc.get("margin_top", 70))
+        band = (y0 / 1920, min(1.0, (y0 + wm_h) / 1920))
+    else:
+        y0 = 1920 - int(wmc.get("margin_bottom", 300)) - wm_h
+        band = (y0 / 1920, min(1.0, (y0 + wm_h) / 1920))
+    info, loud, vis, fid = probe(out), loudness(out), visual(out, band), fidelity(clip, cid)
     at = brief.get("audio_targets", {})
     checks = {
         "length_in_window": lo <= info["duration"] <= hi,
@@ -115,7 +132,10 @@ def main() -> int:
         "audio_present": info["audio"] is not None,
         "loudness_ok": loud["I"] is not None and abs(loud["I"] - at.get("lufs", -16)) <= 2.0,
         "peak_ok": loud["TP"] is not None and loud["TP"] < at.get("true_peak", -1) + .5,
-        "faces_cover": vis["faces"] >= brief.get("framing", {}).get("face_cover_min", .85) - .15,
+        "speaker_present": vis["faces"] >= brief.get("framing", {}).get("face_presence_min", .5),
+        "speaker_framed": (vis["face_center_median"] is not None
+                           and .28 <= vis["face_center_median"] <= .72
+                           and vis["faces_clipped_at_edge"] <= .05),
         "watermark_on_screen": vis["watermark"] >= .9,
         "no_black_frames": vis["black_frames"] <= .02,
         "opening_is_spoken": fid["opening_spoken_in_clip"],

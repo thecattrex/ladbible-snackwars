@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -47,7 +48,7 @@ def probe(p: Path) -> dict:
     dur = re.search(r"Duration: (\d+):(\d+):([\d.]+)", r.stderr)
     vid = re.search(r"Video: (\w+).*?(\d{3,4})x(\d{3,4})", r.stderr)
     fps = re.search(r"(\d+(?:\.\d+)?) fps", r.stderr)
-    aud = re.search(r"Audio: (\w+), (\d+) Hz", r.stderr)
+    aud = re.search(r"Audio: (\w+)[^\n]*?, (\d+) Hz", r.stderr)
     d = int(dur.group(1)) * 3600 + int(dur.group(2)) * 60 + float(dur.group(3)) if dur else 0
     return {"duration": round(d, 3),
             "video_codec": vid.group(1) if vid else None,
@@ -65,7 +66,8 @@ def main() -> int:
     a = ap.parse_args()
     cid = a.campaign_id
     brief = store.validate_brief(cid)
-    work = Path("/tmp/src.mp4")
+    media = Path(os.environ.get("MEDIA_ROOT", "/var/tmp"))
+    work = media / "src.mp4"
 
     if not work.exists():
         src = brief["source"]
@@ -86,7 +88,7 @@ def main() -> int:
     store.artifact(cid, "source_meta", info)
     store.gate(cid, "_campaign", "SOURCE_VALID", info["duration"] > 0, f"{info['duration']}s")
 
-    wav = Path("/tmp/src.wav")
+    wav = media / "src.wav"
     subprocess.run([FF, "-nostdin", "-v", "error", "-y", "-i", str(work), "-vn",
                     "-ac", "1", "-ar", "16000", str(wav)], check=True)
 

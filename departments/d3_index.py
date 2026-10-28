@@ -27,7 +27,10 @@ sys.path.insert(0, str(ROOT))
 from orchestrator import store  # noqa: E402
 
 FF = imageio_ffmpeg.get_ffmpeg_exe()
-SRC = Path("/tmp/src.mp4")
+import os
+from pathlib import Path
+MEDIA = Path(os.environ.get("MEDIA_ROOT", "/var/tmp"))
+SRC = MEDIA / "src.mp4"
 
 
 def scene_changes(t0: float, t1: float) -> list:
@@ -69,6 +72,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("campaign_id")
     ap.add_argument("--sample", type=float, default=20.0, help="seconds between sampled frames")
+    ap.add_argument("--cuts-window", type=float, default=0.0,
+                    help="seconds of picture actually scanned for cuts, per sampled window "
+                         "(0 = whole video). 4K AV1 decode on this box cannot scan 75 min cheaply.")
     a = ap.parse_args()
     cid = a.campaign_id
     meta = store.read_json(cid, "artifacts/source_meta.v1.json")["payload"]
@@ -78,7 +84,15 @@ def main() -> int:
     while t < dur:
         samples.append({"t": round(t, 2), **faces_and_layout(t)})
         t += a.sample
-    cuts = scene_changes(0, dur)
+    if a.cuts_window and a.cuts_window > 0:
+        cuts = []
+        for s0 in np.arange(0, max(1.0, dur), 120.0):
+            cuts += scene_changes(float(s0), float(min(dur, s0 + a.cuts_window)))
+        cuts = sorted(set(cuts))
+        cuts_coverage = f"{a.cuts_window}s scanned every 120s of the video"
+    else:
+        cuts = scene_changes(0, dur)
+        cuts_coverage = "whole video scanned"
 
     words = store.read_json(cid, "artifacts/transcript.v1.json")["payload"]["words"]
     topics = []
@@ -98,10 +112,12 @@ def main() -> int:
         "sampling_interval_s": a.sample,
         "scene_cuts_detected": len(cuts),
         "scene_cuts": cuts[:200],
+        "scene_cut_coverage": cuts_coverage,
         "transcript_windows": topics,
         "coverage": {
             "audio": {"status": "INSPECTED", "note": "full transcript, word timings"},
-            "visual": {"status": "SAMPLED", "note": f"1 frame / {a.sample}s — not frame-by-frame"},
+            "visual": {"status": "SAMPLED", "note": f"1 frame / {a.sample}s — not frame-by-frame; "
+                                                     f"cut detection: {cuts_coverage}"},
             "motion": {"status": "NOT_INSPECTED",
                        "note": "no motion review performed at this stage"},
             "uncertain_intervals": [g["at"] for g in

@@ -3,3 +3,9 @@ state/
 work/
 __pycache__/
 *.pyc
+
+# client campaign briefs stay local: they carry commercial terms, and the
+# source footage never enters the public repo
+campaigns/*/*
+!campaigns/_template/
+!campaigns/_template/campaign.json
