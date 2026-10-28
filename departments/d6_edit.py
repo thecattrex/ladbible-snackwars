@@ -145,7 +145,24 @@ def main() -> int:
 
     t0 = float(edit.get("t0", card["t0"]))
     t1 = float(edit.get("t1", card["t1"]))
-    plan = timeline.build(words, t0, t1, edit)
+
+    # The source cuts to an empty room now and then (wide shot, mic arm, curtain).
+    # An editor cuts away from that; so does the plan: the dead stretch is found on
+    # the picture, removed from the timeline and the window is extended until the
+    # clip is back inside its band. Searching happens before anything is rendered,
+    # because a faceless second is a REVISE in QA and a reshoot in the edit.
+    avoid = [list(x) for x in (edit.get("avoid") or [])]
+    limit = min(float(edit["max_dur"]) + 12.0, 1e9)
+    for _ in range(4):
+        plan = timeline.build(words, t0, t1, dict(edit, avoid=avoid))
+        if plan["duration"] >= float(edit["min_dur"]):
+            break
+        t1 += min(float(edit["min_dur"]) - plan["duration"] + 2.0, 6.0)
+        if t1 - t0 > limit:
+            raise SystemExit(f"no face-safe window near {t0:.1f}s — move the moment")
+    if not plan["within_band"]:
+        raise SystemExit(f"cut plan {plan['duration']}s outside band {plan['band']} "
+                         f"— widen the moment, not the rule")
     plan["window_source"] = "editor override" if ("t0" in edit or "t1" in edit) else "candidate card"
     plan["candidate_id"] = cid_clip
     if not plan["within_band"]:
@@ -155,6 +172,51 @@ def main() -> int:
     # --- picture: one crop per camera shot, never one crop for the whole clip
     shots = framing.analyse(SRC, t0, t1, float(edit.get("face_fps", 4.0)), offset=OFF)
     store.artifact(cid, f"framing_{cid_clip}", shots)
+
+    def dead_spans(sh) -> list[list[float]]:
+        """Source spans whose *cropped* picture shows nobody.
+
+        Two ways a shot can be unusable: the camera is on an empty room, or the
+        9:16 box lands between two people on a wide shot. Both are the same thing
+        to the viewer, so both are measured here — on the crop itself, at a few
+        instants — and cut out of the plan.
+        """
+        out = []
+        for x in sh["shots"]:
+            a, b = max(x["t0"], t0), min(x["t1"], t1)
+            if b - a < 0.30:
+                continue
+            if not x["speaker"]:
+                out.append([round(a, 2), round(b, 2)])
+                continue
+            box = framing.crop_for(x, 3840, 2160,
+                                   target_face_frac=float(edit.get("target_face_frac", 0.30)))
+            probes = [a + (b - a) * k for k in (0.25, 0.55, 0.85)]
+            if not any(cropaudit.face_in_crop(SRC, t, box, offset=OFF) for t in probes):
+                out.append([round(a, 2), round(b, 2)])
+        return out
+
+    dead = dead_spans(shots)
+    if dead:
+        # rebuild the cut with the dead picture removed, then look again at the new
+        # window: the extension can land on another empty shot
+        for _ in range(3):
+            avoid += dead
+            plan = timeline.build(words, t0, t1, dict(edit, avoid=avoid))
+            while plan["duration"] < float(edit["min_dur"]) and t1 - t0 < limit:
+                t1 += min(float(edit["min_dur"]) - plan["duration"] + 2.0, 6.0)
+                plan = timeline.build(words, t0, t1, dict(edit, avoid=avoid))
+            shots = framing.analyse(SRC, t0, t1, float(edit.get("face_fps", 4.0)), offset=OFF)
+            dead = dead_spans(shots)
+            if not dead:
+                break
+        store.artifact(cid, f"framing_{cid_clip}", shots)
+        store.artifact(cid, f"avoid_{cid_clip}", {"spans": avoid,
+                                                  "why": "camera on an empty room"})
+        print(f"avoiding {len(avoid)} faceless spans: {avoid}", file=sys.stderr)
+    if not plan["within_band"]:
+        raise SystemExit(f"cut plan {plan['duration']}s outside band {plan['band']} "
+                         f"after avoiding empty shots")
     if shots["face_coverage"] < float(edit.get("min_face_coverage", 0.97)):
         raise SystemExit(f"only {shots['face_coverage']:.0%} of the window has a face on "
                          f"screen — reframe or move the moment")
@@ -272,6 +334,34 @@ def main() -> int:
     # can sit on an empty desk, so every box is checked against real frames.
     pieces, audit = cropaudit.audit(SRC, pieces, float(edit.get("audit_fps", 4.0)), offset=OFF)
     store.artifact(cid, f"cropaudit_{cid_clip}", audit)
+
+    if audit.get("dead"):
+        # A sliver of empty frame at a shot boundary is just a bad sample: hold the
+        # neighbouring framing over it, the way a dissolve hides a camera move. A
+        # real stretch with no person in any framing is not something an editor can
+        # fix with a crop, so the plan has to leave it out and say so.
+        keep = []
+        long_dead = []
+        for p in pieces:
+            if not p.get("dead"):
+                keep.append(p)
+                continue
+            d = p["src_out"] - p["src_in"]
+            if d >= 0.8:
+                long_dead.append([round(p["src_in"], 2), round(p["src_out"], 2)])
+                keep.append(p)
+                continue
+            if keep:                                  # extend the piece before it
+                keep[-1] = dict(keep[-1], src_out=p["src_out"])
+            else:
+                p = dict(p)
+                p.pop("dead", None)
+                keep.append(p)
+        if long_dead:
+            raise SystemExit(f"no face in any framing for {long_dead} — move the moment, "
+                             f"not the crop")
+        pieces = keep
+        store.artifact(cid, f"cropaudit_{cid_clip}", dict(audit, absorbed_slivers=True))
     if audit["moved"] or audit["split"] or audit["no_face"]:
         print(json.dumps({"crop_audit": audit}, indent=1), file=sys.stderr)
     if os.environ.get("PIECE_DEBUG"):

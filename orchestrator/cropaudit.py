@@ -57,6 +57,29 @@ def sample_faces(src: Path, t0: float, t1: float, fps: float = 4.0, offset: floa
     return out
 
 
+def face_in_crop(src, t: float, box: dict, offset: float = 0.0, fps: float = 4.0) -> bool:
+    """Is there a face inside the *cropped* picture at this instant?
+
+    Detecting faces in the full frame is not the same question: the frame can hold
+    two people while the planned 9:16 box points at the curtain between them. The
+    only honest test decodes the crop itself.
+    """
+    w, h = 540, 960
+    raw = subprocess.run([FF, "-v", "error", "-ss", f"{max(0.0, t - offset):.3f}",
+                          "-i", str(src), "-frames:v", "1", "-an",
+                          "-vf", f"crop={box['w']}:{box['h']}:{box['x']}:{box['y']},"
+                                 f"scale={w}:{h}",
+                          "-f", "rawvideo", "-pix_fmt", "bgr24", "-"],
+                         capture_output=True).stdout
+    if len(raw) < w * h * 3:
+        return False
+    fr = np.frombuffer(raw[:w * h * 3], np.uint8).reshape(h, w, 3).copy()
+    det = cv2.FaceDetectorYN.create(str(_MODEL), "", (w, h), 0.55, 0.3, 5000)
+    det.setInputSize((w, h))
+    ok, faces = det.detect(fr)
+    return bool(ok and faces is not None and len([f for f in faces if f[2] >= 10]))
+
+
 def _shift(box: dict, face) -> dict:
     cx, cy = face[0], face[1]
     x = int(max(0, min(3840 - box["w"], cx - box["w"] / 2)))
@@ -73,7 +96,8 @@ def _inside(box: dict, face, margin: float = 0.06) -> bool:
 
 def audit(src: Path, pieces, fps: float = 4.0, offset: float = 0.0):
     """Fix every piece in place. Returns (pieces, report)."""
-    fixed, report = [], {"checked": 0, "moved": 0, "split": 0, "no_face": 0, "notes": []}
+    fixed, report = [], {"checked": 0, "moved": 0, "split": 0, "no_face": 0, "dead": 0,
+                         "notes": []}
     for p in pieces:
         samples = sample_faces(src, p["src_in"], p["src_out"], fps, offset=offset)
         report["checked"] += 1
@@ -124,24 +148,41 @@ def audit(src: Path, pieces, fps: float = 4.0, offset: float = 0.0):
             part = dict(p)
             part["src_in"], part["src_out"] = round(h0, 3), round(h1, 3)
             part["crop"] = dict(box)
-            if sub:
-                # does the planned box already hold the subject?
-                cover = sum(1 for _, f in sub if _inside(box, f)) / len(sub)
-                if cover < 0.6:
-                    best = max(sub, key=lambda s: s[1][2])[1]
-                    part["crop"] = _shift(box, best)
-                    report["moved"] += 1
-                    report["notes"].append(
-                        f"{h0:.2f}: crop was on nobody ({cover:.0%} of frames), "
-                        f"moved x {box['x']}→{part['crop']['x']}")
-                else:
-                    part["crop"] = _shift(box, max(sub, key=lambda s: s[1][2])[1])
+
+            # Candidate framings: the planned box first, then the box centred on
+            # each person actually seen in the piece. The chosen one has to pass a
+            # test on the decoded crop — a box that contains no face is on the
+            # curtain between two people, however plausible it looks on paper.
+            cands = [dict(box)]
+            clusters = []
+            for _, f in sub:
+                if all(abs(f[0] - c[0]) > box["w"] * 0.3 for c in clusters):
+                    clusters.append(f)
+            for f in sorted(clusters, key=lambda f: abs(f[0] - (box["x"] + box["w"] / 2))):
+                cands.append(_shift(box, f))
+            probes = [h0 + (h1 - h0) * k for k in (0.3, 0.7)] if h1 > h0 else [h0]
+            chosen = None
+            for cand in cands:
+                hits = sum(1 for t in probes if face_in_crop(src, t, cand, offset=offset))
+                if hits == len(probes):
+                    chosen = cand
+                    break
+            if chosen is None:
+                part["dead"] = True
+                report["dead"] = report.get("dead", 0) + 1
+                report["notes"].append(f"{h0:.2f}-{h1:.2f}: no face inside any framing — "
+                                       f"cut this span out of the plan")
+                fixed.append(part)
+                continue
+            if chosen != box:
+                report["moved"] += 1
+                report["notes"].append(f"{h0:.2f}: framing moved x {box['x']}→{chosen['x']}")
+            part["crop"] = chosen
             part["audit"] = "moved" if part["crop"] != box else "kept"
             if hi:
                 part.pop("glide", None)
-                part.pop("box_to", None)
-                part.pop("move", None)
             fixed.append(part)
+
     # A stretch where the detector sees nothing must not be framed by the guess
     # that produced it: hold the nearest framed box so the camera stays on the
     # person who was just talking instead of drifting to the empty chair.

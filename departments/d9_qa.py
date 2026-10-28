@@ -164,16 +164,32 @@ def fidelity(clip: str, cid: str) -> dict:
                   "eighty": 80, "ninety": 90, "hundred": 100})
 
     def values_of(text: str):
+        """Every number the text states, read the way a person says it.
+
+        "3 months" is three, not three million; "1M" is a million; "$30,000" is
+        thirty thousand. The unit only multiplies when it is attached to the
+        digits or spelled out in full.
+        """
         low = text.lower()
         out = []
-        for raw in re.findall(r"[$\d][\d,\.]*\s*(?:k|m|b|million|billion|thousand|%)?", low):
-            v = gfx._num_value(raw)
-            if v:
-                out.append(v)
+        for m in re.finditer(r"\$?\s?(\d[\d,]*(?:\.\d+)?)\s?([a-z]*)", low):
+            v = float(m.group(1).replace(",", ""))
+            unit = m.group(2)
+            glued = m.group(0).rstrip().endswith(unit) and unit != ""
+            if unit in ("k", "m", "b", "bn", "mn") and glued:
+                v *= {"k": 1e3, "m": 1e6, "b": 1e9, "bn": 1e9, "mn": 1e6}[unit]
+            elif unit.startswith("million"):
+                v *= 1e6
+            elif unit.startswith("billion"):
+                v *= 1e9
+            elif unit.startswith("thousand"):
+                v *= 1e3
+            out.append(v)
         for word in re.findall(r"\b[a-z]+\b", low):     # "three months" is a number too
             if word in WORDS:
                 out.append(float(WORDS[word]))
         return out
+
     spoken = [n["value"] for n in gfx.spoken_numbers(
         [w for w in words if card["t0"] - .3 <= w["t"] < card["t1"]], 1e9)]
     heard = values_of(said)

@@ -67,6 +67,9 @@ def build(words, t0, t1, cfg=None):
       punch_on_number: bool       punch in on sentences that carry a number
       punch_phrases  : list[str]  when given, only these sentences are punched
       pad_in/pad_out : float      air kept either side of a hard cut
+      avoid          : list[[a,b]]  source spans the picture cannot use (the
+                     camera is on an empty room there) — the plan cuts around
+                     them and keeps the speech on either side
     """
     cfg = cfg or {}
     max_gap = float(cfg.get("max_gap", 0.60))
@@ -78,13 +81,32 @@ def build(words, t0, t1, cfg=None):
     if not sents:
         raise SystemExit("cut plan: no speech inside the window")
 
+    avoid = [tuple(x) for x in (cfg.get("avoid") or [])]
+
+    def usable(a, b):
+        """Longest part of [a, b] the picture can actually show."""
+        parts = [(a, b)]
+        for x0, x1 in avoid:
+            nxt = []
+            for p0, p1 in parts:
+                if x1 <= p0 or x0 >= p1:
+                    nxt.append((p0, p1))
+                    continue
+                if x0 > p0:
+                    nxt.append((p0, x0))
+                if x1 < p1:
+                    nxt.append((x1, p1))
+            parts = nxt
+        return max(parts, key=lambda q: q[1] - q[0]) if parts else None
+
     kept = []
     for s in sents:
         a = max(s["t"], t0)
         b = min(s["e"], t1)
-        if b - a < 0.25 or is_filler(s["text"], remove):
+        keep = usable(a, b)
+        if not keep or keep[1] - keep[0] < 0.25 or is_filler(s["text"], remove):
             continue
-        kept.append({"src_in": a, "src_out": b, "text": s["text"]})
+        kept.append({"src_in": keep[0], "src_out": keep[1], "text": s["text"]})
     if not kept:
         raise SystemExit("cut plan: every sentence was removed as filler")
 
