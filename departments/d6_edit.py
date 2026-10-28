@@ -21,14 +21,14 @@ import imageio_ffmpeg
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from orchestrator import store, timeline, framing  # noqa: E402
+from orchestrator import store, timeline, framing, cropaudit  # noqa: E402
 
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 import os
 from pathlib import Path
 MEDIA = Path(os.environ.get("MEDIA_ROOT", "/var/tmp"))
 SRC = MEDIA / "src.mp4"
-W, H = 1080, 1120   # picture area between the title bands (D8 stacks the bands)
+W, H = 1080, 1920   # full-bleed vertical: the client rejected the letterbox bands
 cv2.setNumThreads(2)
 
 
@@ -198,36 +198,36 @@ def main() -> int:
                          f"render a clip whose layers disagree")
 
     # --- split frame: the moment both people are talking at once, the reference
-    # edit puts them side by side with a divider instead of choosing one
+    # edit puts them side by side with a divider instead of choosing one.
+    # The replacement is done by walking the pieces in source order and splitting
+    # the overlap, so the output clock stays exact and nothing is duplicated.
     split_win = edit.get("split_src")           # [src_in, src_out] or None
     if split_win:
         a0, a1 = float(split_win[0]), float(split_win[1])
         wide = next((sh for sh in shots["shots"]
-                     if sh.get("candidates") and len(sh["candidates"]) >= 2
+                     if (sh.get("candidates") or []) and len(sh["candidates"]) >= 2
                      and sh["t1"] > a0 and sh["t0"] < a1), None)
         if wide:
             cands = sorted(wide["candidates"], key=lambda c: c["cx"])
-            left, right = cands[0], cands[-1]
-            ss, ee = max(a0, wide["t0"]), min(a1, wide["t1"])
+            ss, ee = round(max(a0, wide["t0"]), 3), round(min(a1, wide["t1"]), 3)
             if ee - ss > 0.6:
-                out, cur = [], []
-                for pc in pieces:                       # replace the overlap
-                    if pc["src_out"] <= ss or pc["src_in"] >= ee:
-                        out.append(pc)
+                rebuilt = []
+                for pc in pieces:
+                    if pc["src_out"] <= ss + 0.001 or pc["src_in"] >= ee - 0.001:
+                        rebuilt.append(pc)
                         continue
                     if pc["src_in"] < ss:
-                        cur.append({**pc, "src_out": ss})
+                        rebuilt.append({**pc, "src_out": ss})
+                    rebuilt.append({"src_in": ss, "src_out": ee, "shot": wide,
+                                    "segment": pc["segment"], "split": True,
+                                    "side": {"left": cands[0], "right": cands[-1]}})
                     if pc["src_out"] > ee:
-                        cur.append({**pc, "src_in": ee})
-                first_i = next((i for i, pc in enumerate(pieces)
-                                if pc["src_out"] > ss and pc["src_in"] < ee), len(out))
-                out = out[:first_i] + [{"src_in": round(ss, 3), "src_out": round(ee, 3),
-                                        "shot": wide, "segment": -1, "split": True,
-                                        "side": {"left": left, "right": right}}] + \
-                      out[first_i:] + cur
-                pieces = sorted(out, key=lambda pc: pc["src_in"])
-                plan["split_frame"] = {"src": [round(ss, 3), round(ee, 3)],
-                                       "left_cx": left["cx"], "right_cx": right["cx"]}
+                        rebuilt.append({**pc, "src_in": ee})
+                pieces = rebuilt
+                plan["split_frame"] = {"src": [ss, ee],
+                                       "left_cx": cands[0]["cx"], "right_cx": cands[-1]["cx"]}
+                plan["note_split"] = ("both speakers talking: side-by-side with a divider, "
+                                      "replacing the single-crop piece for that window")
 
     # punch-in doubles: a beat reads as an edit because the frame changes size
     punch = float(edit.get("punch_zoom", 0.90))
@@ -246,30 +246,84 @@ def main() -> int:
         out_t = p["out_out"]
         prev_key = key
 
+    # ---- crop audit: the framing track is a summary, the picture is the truth.
+    # If the source cut to a new setup between two track samples the planned crop
+    # can sit on an empty desk, so every box is checked against real frames.
+    pieces, audit = cropaudit.audit(SRC, pieces, float(edit.get("audit_fps", 4.0)))
+    store.artifact(cid, f"cropaudit_{cid_clip}", audit)
+    if audit["moved"] or audit["split"] or audit["no_face"]:
+        print(json.dumps({"crop_audit": audit}, indent=1), file=sys.stderr)
+    out_t = 0.0
+    for p in pieces:                       # rebuilding can change the piece count
+        p["out_in"] = round(out_t, 3)
+        p["out_out"] = round(out_t + (p["src_out"] - p["src_in"]), 3)
+        out_t = p["out_out"]
+
+    # ---- camera: a moving window, not a stack of stills.
+    # In the reference edit the frame glides from one speaker to the next across
+    # the wide shot instead of cutting, and it never sits perfectly still. So each
+    # piece carries a camera path: hold, then glide into the next speaker's box.
+    move_s = float(edit.get("move_seconds", 0.55))
+    for i in range(len(pieces) - 1):
+        a, b = pieces[i], pieces[i + 1]
+        ba, bb = a["crop"], b["crop"]
+        same_size = abs(ba["w"] - bb["w"]) <= 40 and abs(ba["h"] - bb["h"]) <= 70
+        wide = a["shot"].get("candidates") and len(a["shot"].get("candidates") or []) >= 2
+        if same_size and wide and abs(ba["x"] - bb["x"]) > 60:
+            # both speakers share this wide shot: glide across, do not cut
+            a["box_to"] = bb
+            a["move"] = min(move_s, max(0.35, (a["src_out"] - a["src_in"]) * 0.45))
+            a["glide"] = True
+
+    # a slow, continuous drift on every static piece so the frame feels like it is
+    # held by an operator rather than locked on a tripod
+    drift = float(edit.get("drift_px", 14))
+    for i, p in enumerate(pieces):
+        if p.get("glide"):
+            continue
+        b = p["crop"]
+        direction = 1 if (i % 2 == 0) else -1
+        p["box_to"] = {"x": max(0, min(3840 - b["w"], b["x"] + direction * drift)),
+                       "y": b["y"], "w": b["w"], "h": b["h"]}
+        p["move"] = p["src_out"] - p["src_in"]      # drift over the whole piece
+        p["glide"] = False
+
+    def crop_expr(p):
+        a, b = p["crop"], p["box_to"]
+        d = p["src_out"] - p["src_in"]
+        m = max(0.05, min(p["move"], d))
+        if abs(a["x"] - b["x"]) < 1 and abs(a["y"] - b["y"]) < 1:
+            return f"crop={a['w']}:{a['h']}:{a['x']}:{a['y']}"
+        # ease-out on the glide, linear gentle drift otherwise
+        ramp = (f"min(1\\,max(0\\,(t-{max(0.0, d - m):.3f})/{m:.3f}))"
+                if p.get("glide") else f"min(1\\,(t/{d:.3f}))")
+        ease = f"(1-pow(1-{ramp}\\,2))" if p.get("glide") else ramp
+        x = f"({a['x']}+({b['x']}-{a['x']})*{ease})"
+        y = f"({a['y']}+({b['y']}-{a['y']})*{ease})"
+        return f"crop={a['w']}:{a['h']}:x='{x}':y='{y}'"
+
     parts = []
     for i, p in enumerate(pieces):
         f = store.path(cid, f"work/{cid_clip}_v{i:02d}.mp4")
         dur_i = p["src_out"] - p["src_in"]
         if p.get("split"):
-            half_w = (W - 8) // 2
-            half_h = H
-            # each side gets its own 9:16-ish crop around that speaker, joined by
-            # an 8 px lime rule, the way the reference split does it
+            half_w = (W - 5) // 2
             boxes = []
-            for side_key, w_frac in (("left", 0.0), ("right", 1.0)):
+            for side_key in ("left", "right"):
                 cx = p["side"][side_key]["cx"] * 3840
                 cw = int(half_w * 3840 / W)
                 ch = int(cw * H / half_w)
-                if ch > 2160:
-                    ch = 2160
-                    cw = int(ch * half_w / H)
+                # zoom the panel in: a full-height slice leaves a dead band of
+                # curtain above both heads, which reads as an empty frame
+                ch = min(2160, int(ch * 0.78))
+                cw = int(ch * half_w / H)
                 cx0 = int(max(0, min(3840 - cw, cx - cw / 2)))
-                cy0 = int(max(0, min(2160 - ch, 0.40 * 2160 - ch / 2)))
+                cy0 = int(max(0, min(2160 - ch, 0.44 * 2160 - 0.40 * ch)))
                 boxes.append((cx0, cy0, cw, ch))
             (lx, ly, lw, lh), (rx, ry, rw_, rh) = boxes
-            fc = (f"[0:v]crop={lw}:{lh}:{lx}:{ly},scale={half_w}:{half_h}:flags=lanczos[l];"
-                  f"[0:v]crop={rw_}:{rh}:{rx}:{ry},scale={half_w}:{half_h}:flags=lanczos[r];"
-                  f"color=c=0xC6FF00:s=8x{half_h}:d=1[lime];"
+            fc = (f"[0:v]crop={lw}:{lh}:{lx}:{ly},scale={half_w}:{H}:flags=lanczos[l];"
+                  f"[0:v]crop={rw_}:{rh}:{rx}:{ry},scale={half_w}:{H}:flags=lanczos[r];"
+                  f"color=c=0xB4E600:s=5x{H}:d=1[lime];"
                   f"[l][lime][r]hstack=inputs=3,setsar=1,fps={fps}[v]")
             subprocess.run([FF, "-nostdin", "-v", "error", "-y",
                             "-ss", f"{p['src_in']:.3f}", "-t", f"{dur_i:.3f}",
@@ -277,9 +331,7 @@ def main() -> int:
                             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                             "-pix_fmt", "yuv420p", str(f)], check=True)
         else:
-            b = p["crop"]
-            vf = (f"crop={b['w']}:{b['h']}:{b['x']}:{b['y']},"
-                  f"scale={W}:{H}:flags=lanczos,setsar=1,fps={fps}")
+            vf = (f"{crop_expr(p)},scale={W}:{H}:flags=lanczos,setsar=1,fps={fps}")
             subprocess.run([FF, "-nostdin", "-v", "error", "-y",
                             "-ss", f"{p['src_in']:.3f}", "-t", f"{dur_i:.3f}",
                             "-i", str(SRC), "-vf", vf, "-an",
@@ -299,6 +351,7 @@ def main() -> int:
                "speed": 1.0, "crop": p["crop"], "asset": "source",
                "provenance": "campaign source", "transition": "cut",
                "shot_kind": p["shot"]["kind"], "speaker_cx": p["shot"]["speaker"]["cx"],
+               "camera": "glide" if p.get("glide") else "drift",
                "purpose": ("punch-in on the point" if p["punch"] else
                            ("speaker close-up" if p["shot"]["kind"] == "CLOSE_ONE"
                             else "speaker in wide shot")),

@@ -49,14 +49,30 @@ reasoning can be re-checked, not repeated from memory.
 ## Second pass — reference-driven corrections
 
 After watching a reference short the client supplied (multi-cam podcast clip):
-- **Cut on the speaker, not on the clock.** Hard cut to whoever is talking; when
-  both talk at once, go to a **split frame with a divider** instead of picking one.
-  The divider should read as a deliberate line (brand colour), not a seam.
+- **Follow the speaker with the camera, not with cuts.** Re-watching the
+  reference frame by frame (0.25 s apart) shows there is no cut inside the wide
+  shot: the frame **glides** from whoever was talking to whoever answers, then
+  keeps drifting. A cut is a last resort — reserve it for a genuine change of
+  setup in the source (wide → close-up).
+- **A wide two-shot with two faces = a moving window.** One crop per speaker, and
+  the crop travels across the shot in ~0.5 s with an ease-out. Static per-shot
+  crops look like a photo slideshow, which is what got the first cut rejected.
+- **Split frame only for genuine overlap** (both people talking at once): two
+  tight panels with a brand-colour divider. Panel crops are zoomed to the face —
+  a full-height slice leaves a band of empty curtain above both heads.
 - **No music bed.** The reference runs clean dialogue plus a few transition
   effects. A synthesised bed under speech was the "annoying background sound";
   ambience that is not the source audio is out.
 - **Effects only where a picture event happens** — one soft impact as a card
   lands. No riser on claims, no whoosh on every cut (the reference has none).
-- **Letterbox bands**: blank space above and below the picture carries the
-  headline and the one-line summary, with the operative word marked. That keeps
-  text off the speaker entirely and makes the clip legible muted.
+- **No letterbox bands.** Blank bands above and below the picture were tried and
+  the client rejected them: sub-9:16 picture inside a 9:16 frame reads as
+  "compressed". Delivery is full-bleed 1080x1920 — the whole frame is picture.
+  Title/watermark live over the picture at the top, cards mid-frame, captions low.
+- **Crop audit is mandatory.** A face track sampled at 4 fps is a summary; when
+  the source cuts to a new setup between two samples the planned crop lands on an
+  empty desk. Every crop is checked against the real frames before render and
+  moved onto the nearest face (see `orchestrator/cropaudit.py`).
+- **A still image input to ffmpeg must be looped** (`-loop 1 -framerate <fps>`).
+  A one-frame stream composited with `overlay` silently stops appearing after
+  ~12 s, which took the watermark off the back half of a render.

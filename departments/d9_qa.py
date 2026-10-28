@@ -126,7 +126,10 @@ def visual(p: Path, wm_band=(.03, .16), area=(0.0, 1.0)) -> dict:
             centers.append((x + fw / 2) / w)
             clipped += bool(x < 2 or x + fw > w - 2 or y < 2)
         y0, y1 = int(h * wm_band[0]), int(h * wm_band[1])
-        wm.append(float((g[y0:y1] > 170).mean()))
+        band_px = bgr[y0:y1].astype(int)
+        gg, bb, rr = band_px[:, :, 1], band_px[:, :, 0], band_px[:, :, 2]
+        lime = ((gg > 165) & (bb < 130) & ((gg - np.maximum(bb, rr)) > 30))
+        wm.append(float(lime.mean()))
         black += bool(float(g.mean()) < 8)
     if cur is not None:
         faceless_runs.append((cur, n / 4))
@@ -137,7 +140,7 @@ def visual(p: Path, wm_band=(.03, .16), area=(0.0, 1.0)) -> dict:
             "faces": round(faces / n, 3),
             "longest_faceless_run_s": round(longest, 2),
             "faceless_in_first_2s": bool(first_two),
-            "watermark": round(float(np.mean([b > .004 for b in wm])), 3),
+            "watermark": round(float(np.mean([x > .004 for x in wm])), 3),
             "black_frames": round(black / n, 3)}
 
 
@@ -185,7 +188,13 @@ def main() -> int:
     wmc = brief.get("watermark", {}) or {}
     pos = wmc.get("position", "bottom-center")
     wm_w = int(wmc.get("width", 640))
-    wm_h = int(wm_w * 549 / 1993)          # asset aspect, kept from the delivered PNG
+    wm_file = ROOT / wmc.get("asset", wmc.get("file", "assets/watermark_white.png"))
+    aspect = 549 / 1993
+    if wm_file.exists():
+        from PIL import Image as _I
+        im_ = _I.open(wm_file)
+        aspect = im_.height / im_.width
+    wm_h = max(20, int(wm_w * aspect))
     if pos.startswith("top"):
         y0 = int(wmc.get("margin_top", 70))
         band = (y0 / 1920, min(1.0, (y0 + wm_h) / 1920))

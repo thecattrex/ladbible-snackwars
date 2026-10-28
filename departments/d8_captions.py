@@ -302,7 +302,10 @@ def main() -> int:
 
     out = store.path(cid, f"clips/{clip}.mp4")
     subprocess.run([FF, "-nostdin", "-v", "error", "-y",
-                    "-i", str(picture), "-i", str(audio), "-i", str(wm),
+                    "-i", str(picture), "-i", str(audio),
+                    # a still image must be looped: a one-frame stream + overlay's
+                    # eof_action silently stops compositing after ~12 s
+                    "-loop", "1", "-framerate", str(fps), "-i", str(wm),
                     *(["-i", band_files["top"], "-i", band_files["bottom"]]
                       if band_files else []),
                     *[x for c in cards for x in ("-i", c["path"])],
