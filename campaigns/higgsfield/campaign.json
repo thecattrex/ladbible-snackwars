@@ -1,0 +1,33 @@
+{
+  "name": "higgsfield-20vc",
+  "source": {
+    "kind": "wetransfer",
+    "transfer_id": "ac6977b32e8cc893ee19e14dbec4787c20260929040256",
+    "security_hash": "a7bc2d",
+    "src_url": ""
+  },
+  "clips": 12,
+  "length": {"min": 31.0, "max": 35.0},
+  "aspect": "9:16",
+  "fps": 30,
+  "shards": 12,
+  "transcribe": {
+    "model": "small.en",
+    "initial_prompt": "Higgsfield, Alex Mashrabov, 20VC, Harry Stebbings, Sora, Veo, Kling, ARR, NRR, SaaS, agentic, vibe coding, Mashrabov."
+  },
+  "watermark": {"file": "assets/watermark_white.png", "width": 640, "margin_bottom": 300},
+  "captions": {"max_words": 3, "highlight": true, "fontsize": 60, "margin_v": 560},
+  "hook_card": {"fontsize": 84, "seconds": 3.5, "margin_v": 200},
+  "audio": {"lufs": -15, "tp": -1.5, "music_gain_db": -22, "whoosh_gain_db": -14, "thump_gain_db": -12},
+  "framing": {
+    "crop_w": 1068, "crop_h": 1898,
+    "avoid_bottom_px": 260,
+    "punch_in": 1.06,
+    "face_cover_min": 0.85
+  },
+  "platforms": {
+    "instagram": "@higgsfield.ai @20vchq",
+    "youtube": "@HiggsfieldAI @20VC"
+  },
+  "banned": ["outside footage", "reordered words", "fake hook", "clickbait promise"]
+}
