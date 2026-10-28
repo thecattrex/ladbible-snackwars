@@ -78,34 +78,37 @@ def snap(t: float, strength: np.ndarray, sr: int = 16000, hop: int = 256,
     return peak * hop / sr
 
 
-def whoosh(path: Path, dur: float = 0.28, sr: int = 44100, seed: int = 7) -> None:
-    """Soft airy sweep, synthesised here — no library, no licence, no download."""
+def riser(path: Path, dur: float = 0.42, sr: int = 44100, seed: int = 11) -> None:
+    """A soft swell that ends exactly on the cut.
+
+    The old whoosh was a broadband swoosh — it hisses and calls attention to
+    itself. This is a low-passed noise swell that rises into the cut and stops
+    dead on it, so the ear feels the edit land instead of hearing an effect.
+    """
     rng = np.random.default_rng(seed)
     n = int(sr * dur)
     noise = rng.standard_normal(n)
-    # one-pole lowpass opening up, then closing: the "pass by" shape
     out = np.zeros(n)
     y = 0.0
     for i in range(n):
         k = i / n
-        cutoff = 0.02 + 0.5 * math.sin(math.pi * k)
+        cutoff = 0.010 + 0.055 * (k ** 2)          # stays dark, never hissy
         y += cutoff * (noise[i] - y)
-        out[i] = y * (k ** 1.6) * ((1 - k) ** 0.6)
-    out = out / (np.abs(out).max() + 1e-9) * 0.35
-    st = np.stack([out, np.roll(out, 24)], axis=1)
-    pcm = (st * 32767).astype(np.int16)
+        out[i] = y * (k ** 2.2)                     # rises to the cut, then stops
+    out[-int(0.004 * sr):] *= np.linspace(1, 0, int(0.004 * sr))   # no click
+    out = out / (np.abs(out).max() + 1e-9) * 0.22
+    st = np.stack([out, out], axis=1)
     with wave.open(str(path), "wb") as w:
         w.setnchannels(2); w.setsampwidth(2); w.setframerate(sr)
-        w.writeframes(pcm.tobytes())
+        w.writeframes((st * 32767).astype(np.int16).tobytes())
 
 
 def thump(path: Path, sr: int = 44100) -> None:
     """Low hit for a punch-in — felt more than heard."""
     n = int(sr * 0.30)
     t = np.arange(n) / sr
-    body = np.sin(2 * math.pi * 62 * t) * np.exp(-t * 16)
-    click = np.random.default_rng(3).standard_normal(n) * np.exp(-t * 220) * 0.25
-    out = (body + click) * 0.5
+    body = np.sin(2 * math.pi * 58 * t) * np.exp(-t * 22)
+    out = body * 0.32
     st = np.stack([out, out], axis=1)
     with wave.open(str(path), "wb") as w:
         w.setnchannels(2); w.setsampwidth(2); w.setframerate(sr)
@@ -190,6 +193,8 @@ def move_filter(move: str, dur: float) -> str:
         z = f"max(1.20-{0.16 / max(dur, 0.1):.5f}*on,1.02)"
     elif move == "punch":
         z = "1.24"
+    elif move == "tight":
+        z = "1.36"
     else:                                    # static, but still not a raw screen grab
         z = "1.06"
     return f"{up},zoompan=z='{z}':{centre}:d=1:s={L.CLIP_W}x{L.CLIP_H}:fps={FPS}"
@@ -232,17 +237,18 @@ def build(video: Path, plan: dict, out: Path) -> None:
 
     # sfx: a whoosh on every cut, a thump when the move is a punch
     sfx_dir = tmp / "sfx"; sfx_dir.mkdir()
-    whoosh(sfx_dir / "whoosh.wav"); thump(sfx_dir / "thump.wav")
+    riser(sfx_dir / "riser.wav"); thump(sfx_dir / "thump.wav")
     sfx_inputs, sfx_graph = [], []
     base = len(shots)
     for k, shot in enumerate(shots[1:]):
         i = k + 1
-        at = sum(q["len"] for q in shots[:i])
-        name = "thump.wav" if shot["move"] == "punch" else "whoosh.wav"
+        at = sum(q["len"] for q in shots[:i]) - (0.42 if shot["move"] != "punch" else 0.0)
+        at = max(0.0, at)
+        name = "thump.wav" if shot["move"] == "punch" else "riser.wav"
         idx = base + k        # k-th sfx file, not the k-th '-i' token
         sfx_inputs += ["-i", str(sfx_dir / name)]
         sfx_graph.append(f"[{idx}:a]adelay={int(at * 1000)}|{int(at * 1000)},"
-                         f"volume={0.30 if name == 'whoosh.wav' else 0.42}[s{k}]".replace("{k}", str(k)))
+                         f"volume={0.55 if name == 'riser.wav' else 0.70}[s{k}]".replace("{k}", str(k)))
     n_sfx = len(sfx_graph)          # one entry per sfx, not per "-i path" token
     mix = ("[ac]" + "".join(f"[s{k}]" for k in range(n_sfx)) +
            f"amix=inputs={1 + n_sfx}:duration=first:normalize=0,"
@@ -261,15 +267,20 @@ def build(video: Path, plan: dict, out: Path) -> None:
         print("ffmpeg said:\n" + res.stderr[-1500:])
         raise SystemExit(1)
 
-    print("captioning…", flush=True)
-    cards = captions_from_audio(clip, tmp)
+    # a dance or costume clip has nobody talking over it; transcribing music only
+    # invents words and costs memory this box does not have
+    cards = []
+    if plan.get("captions", True):
+        print("captioning…", flush=True)
+        cards = captions_from_audio(clip, tmp)
     print(f"{len(cards)} caption cards")
     ass = tmp / "caps.ass"
     write_ass(cards, ass, L.CLIP_W, L.CLIP_H)
 
     graded = tmp / "graded.mp4"
+    sub = f",subtitles={ass}:fontsdir={L.ASSETS}" if cards else ""
     subprocess.run([FF, "-v", "error", "-y", "-i", str(clip), "-vf",
-                    L.grade_filter() + f",setsar=1,subtitles={ass}:fontsdir={L.ASSETS}",
+                    L.grade_filter() + ",setsar=1" + sub,
                     "-threads", "2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
                     "-c:a", "copy", str(graded)], check=True)
 
