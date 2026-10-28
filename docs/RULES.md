@@ -33,3 +33,18 @@ system refuses a brief that leaves them empty. Same for source rights.
 `DESIGN_ONLY` validates and starts no media job. `BUILD_WORKFLOW` validates the
 orchestration with authorized fixtures. `RUN_CAMPAIGN` processes the supplied
 campaign only.
+
+## R5 — Approved craft is the default, not a preference
+The craft rules agreed with the client live in `docs/CRAFT.md` and in section J9 of
+`docs/MASTER_PROMPT.md`. Every department reads them before it renders: frame-locked
+cuts, speaker-follow framing with a crop audit, a moving camera, split frame only for
+real overlap, full-bleed picture, type-led graphics, captions in one lane, clean dialogue
+with no music bed, watermark for the whole clip.
+
+Rejected approaches are not "off by default" — they are deleted from the tree, so a later
+bot cannot switch them back on by adding a config key.
+
+## R6 — Numbers or it did not happen
+D9 reports measured values (loudness, true peak, decode errors, faces per frame, watermark
+probe, picture duration against the timeline). A check that could not be measured is
+reported as unperformed, never as passed.
