@@ -27,7 +27,9 @@ BANNER = ASSETS / "irubyana" / "banner.jpg"
 W, H = 1080, 1920
 CLIP_W = 1080
 CLIP_H = 608
-CLIP_Y = (H - CLIP_H) // 2          # 656 — dead centre, as asked
+# dead centre measures low on a phone, because the app draws its own UI over the
+# bottom of the frame: lift the picture 56 px so it *reads* centred
+CLIP_Y = (H - CLIP_H) // 2 - 56     # 600
 SAFE_BOTTOM = 1600                  # TikTok/Reels paint their own UI below this
 
 BLOOD_TOP = (255, 42, 42)
@@ -148,17 +150,24 @@ def headline(canvas: Image.Image, title: str, kicker: str, top: int = 130) -> Im
     headline that gets cropped looks like a mistake, not a style.
     """
     measure = ImageDraw.Draw(canvas)
-    size = 150
+    size = 210
     while size > 60:
         f = font(HEAD, size)
-        if measure.textlength(title.upper(), font=f) + 4 * (len(title) - 1) <= 980:
+        if measure.textlength(title.upper(), font=f) + 5 * (len(title) - 1) <= 1030:
             break
         size -= 4
     f = font(HEAD, size)
-    blood_text(canvas, (W / 2, top), title.upper(), f, tracking=4, drips=11)
-    kf = font(KICKER, 96)
-    shadowed_text(canvas, (W / 2, top + size + 150), kicker.upper(), kf, CREAM,
-                  tracking=12, outline=6, shadow=9)
+    blood_text(canvas, (W / 2, top), title.upper(), f, tracking=5, drips=13)
+
+    # the kicker is fitted the same way — running off the sides looks broken
+    ksize = 132
+    while ksize > 60:
+        kf = font(KICKER, ksize)
+        if measure.textlength(kicker.upper(), font=kf) + 16 * (len(kicker) - 1) <= 1000:
+            break
+        ksize -= 4
+    shadowed_text(canvas, (W / 2, top + size + 200), kicker.upper(), font(KICKER, ksize),
+                  CREAM, tracking=16, outline=7, shadow=10)
     return canvas
 
 

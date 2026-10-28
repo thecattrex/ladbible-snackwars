@@ -96,8 +96,8 @@ def write_ass(cards: list, path: Path, width: int, height: int) -> None:
         ("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,"
          " BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle,"
          " BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"),
-        ("Style: Cap,Poppins ExtraBold,64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,"
-         "-1,0,0,0,100,100,1,0,1,8,4,2,40,40,54,1"),
+        ("Style: Cap,Bangers,92,&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,"
+         "-1,0,0,0,100,100,4,0,1,8,3,2,40,40,66,1"),
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
     for c in cards:
