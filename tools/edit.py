@@ -103,6 +103,30 @@ def riser(path: Path, dur: float = 0.42, sr: int = 44100, seed: int = 11) -> Non
         w.writeframes((st * 32767).astype(np.int16).tobytes())
 
 
+def kb_click(path: Path, sr: int = 48000, seed: int = 5) -> None:
+    """A mechanical keyboard clack: a dry noise tick with a tiny plastic body.
+
+    Two parts — a bright noise burst that dies in ~25 ms, and a very short
+    low click that gives it weight. Nothing sustained, nothing tonal, so it
+    reads as a cut landing rather than as a sound effect.
+    """
+    import numpy as _np
+    rng = _np.random.default_rng(seed)
+    n = int(sr * 0.055)
+    t = _np.arange(n) / sr
+    tick = rng.standard_normal(n) * _np.exp(-t * 190)
+    # keep only the bright part of the tick: first difference = a crude high-pass
+    tick = _np.diff(tick, prepend=tick[0])
+    body = _np.sin(2 * _np.pi * 210 * t) * _np.exp(-t * 260) * 0.35
+    out = tick / (_np.abs(tick).max() + 1e-9) * 0.55 + body
+    out[-int(0.003 * sr):] *= _np.linspace(1, 0, int(0.003 * sr))
+    out = out / (_np.abs(out).max() + 1e-9) * 0.30
+    st = _np.stack([out, out], axis=1)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(2); w.setsampwidth(2); w.setframerate(sr)
+        w.writeframes((st * 32767).astype(_np.int16).tobytes())
+
+
 def thump(path: Path, sr: int = 44100) -> None:
     """Low hit for a punch-in — felt more than heard."""
     n = int(sr * 0.30)
@@ -235,24 +259,29 @@ def build(video: Path, plan: dict, out: Path) -> None:
     agraphs.append("".join(f"[a{i}]" for i in range(len(shots))) +
                    f"concat=n={len(shots)}:v=0:a=1[ac]")
 
-    # sfx: a whoosh on every cut, a thump when the move is a punch
+    # sfx: none unless the plan asks for a click on the cuts. No swells, no
+    # whooshes — the user does not want to hear an effect at the edit point.
+    mode = plan.get("sfx", "none")
     sfx_dir = tmp / "sfx"; sfx_dir.mkdir()
-    riser(sfx_dir / "riser.wav"); thump(sfx_dir / "thump.wav")
     sfx_inputs, sfx_graph = [], []
     base = len(shots)
-    for k, shot in enumerate(shots[1:]):
-        i = k + 1
-        at = sum(q["len"] for q in shots[:i]) - (0.42 if shot["move"] != "punch" else 0.0)
-        at = max(0.0, at)
-        name = "thump.wav" if shot["move"] == "punch" else "riser.wav"
-        idx = base + k        # k-th sfx file, not the k-th '-i' token
-        sfx_inputs += ["-i", str(sfx_dir / name)]
-        sfx_graph.append(f"[{idx}:a]adelay={int(at * 1000)}|{int(at * 1000)},"
-                         f"volume={0.55 if name == 'riser.wav' else 0.70}[s{k}]".replace("{k}", str(k)))
-    n_sfx = len(sfx_graph)          # one entry per sfx, not per "-i path" token
-    mix = ("[ac]" + "".join(f"[s{k}]" for k in range(n_sfx)) +
-           f"amix=inputs={1 + n_sfx}:duration=first:normalize=0,"
-           "alimiter=limit=0.95[aout]") if sfx_inputs else "[ac]anull[aout]"
+    if mode == "click":
+        kb_click(sfx_dir / "click.wav")
+        for k, shot in enumerate(shots[1:]):
+            at = sum(q["len"] for q in shots[:k + 1])
+            sfx_inputs += ["-i", str(sfx_dir / "click.wav")]
+            sfx_graph.append(f"[{base + k}:a]adelay={int(at * 1000)}|{int(at * 1000)},"
+                             f"volume=0.55[c{k}]")
+
+    # gain staging: the source is already loud, so pull it down before summing and
+    # limit, otherwise the peak goes over 1.0 and the whole clip distorts
+    n_sfx = len(sfx_graph)
+    if n_sfx:
+        mix = ("[ac]volume=0.72[acg];[acg]" + "".join(f"[c{k}]" for k in range(n_sfx)) +
+               f"amix=inputs={1 + n_sfx}:duration=first:normalize=0,"
+               "alimiter=limit=0.89[aout]")
+    else:
+        mix = "[ac]volume=0.80,alimiter=limit=0.89[aout]"
 
     clip = tmp / "clip.mp4"
     graph = ";".join(graphs + agraphs + sfx_graph + [mix])

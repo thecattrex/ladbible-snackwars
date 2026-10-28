@@ -56,3 +56,18 @@ passing the curtain) is the defect. Measured by `orchestrator/content.py` on dec
 pixels; D6 removes dead spans from the plan, D9 fails a clip with more than half a second
 of nothing. Tests: `tools/test_content.py`, `tools/test_meaningful_frame.py`,
 `tools/test_pipeline_content.py`.
+
+## R8 — Sound at a cut
+
+- **No effect on a cut by default.** Whooshes, risers and swells are banned: the
+  user hears them as noise over the stream audio, not as editing.
+- The only allowed cut sound is a **dry keyboard click** (~55 ms, high-passed noise
+  plus a short 210 Hz body), and only when a plan asks for it (`"sfx": "click"`).
+- Everything else stays out: no music beds, no impact hits, no transitions.
+- **Gain staging is part of the rule.** Stream audio is loud already: pull it to
+  0.80, sum effects (if any) at ≤0.55, then `alimiter=limit=0.89`. A peak over 1.0
+  is a defect — demo7 peaked at 1.08 and distorted through the whole clip.
+- **Check the source is audible before cutting.** This VOD's audio is muted from
+  54:20 to 57:20 (copyright mute); a plan built only from the visuals there
+  delivers a silent clip. Measure RMS across the VOD first and keep every shot
+  inside a live span.
