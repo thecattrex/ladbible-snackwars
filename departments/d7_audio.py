@@ -77,8 +77,13 @@ def main() -> int:
     music_db = at.get("music_gain_db", -22)
 
     edl = store.read_json(cid, f"artifacts/edl_picture_{clip}.v1.json")["payload"]
+    plan = store.read_json(cid, f"artifacts/cutplan_{clip}.v1.json")["payload"]
     dur = edl["events"][-1]["output_out"]
-    events = edl["events"]
+    # dialogue follows the audio segmentation (one contiguous run of his voice per
+    # segment); whooshes follow the picture segmentation (where the frame changes)
+    events = [{"source_in": s["src_in"], "source_out": s["src_out"],
+               "output_in": s["out_in"], "output_out": s["out_out"],
+               "purpose": s["purpose"]} for s in plan["segments"]]
 
     work = store.path(cid, f"work/{clip}")
     dialogue = work.with_name(f"{clip}_dialogue.wav")
@@ -107,6 +112,8 @@ def main() -> int:
     cues = [{"cue": "music_bed", "asset": "generated pad", "provenance": "synthesised in D7",
              "gain_db": music_db, "at": 0.0, "purpose": "fill room tone under speech; ducked"}]
     cut_points = [e["output_out"] for e in edl["events"][:-1]]
+    if len(cut_points) > 14:                      # keep the mix clean on fast cuts
+        cut_points = cut_points[:14]
     for i, ct in enumerate(cut_points):
         cues.append({"cue": f"whoosh_{i}", "asset": "generated whoosh", "provenance": "synthesised in D7",
                      "gain_db": at.get("whoosh_gain_db", -14), "at": round(ct, 2),

@@ -21,7 +21,7 @@ import imageio_ffmpeg
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from orchestrator import store, timeline  # noqa: E402
+from orchestrator import store, timeline, framing  # noqa: E402
 
 FF = imageio_ffmpeg.get_ffmpeg_exe()
 import os
@@ -127,7 +127,6 @@ def main() -> int:
     a = ap.parse_args()
     cid, cid_clip = a.campaign_id, a.clip
     brief = store.validate_brief(cid)
-    fr = brief.get("framing", {})
     fps = int(brief["delivery"].get("fps", 30))
     portfolio = store.read_json(cid, "artifacts/portfolio.v1.json")["payload"]["selected"]
     card = next(c for c in portfolio if c["candidate_id"] == cid_clip)
@@ -140,8 +139,7 @@ def main() -> int:
     edit.update((store.read_json(cid, "edit_overrides.json", {}) or {}).get(cid_clip, {}))
     edit.setdefault("min_dur", brief["clip_length"]["min"])
     edit.setdefault("max_dur", brief["clip_length"]["max"])
-    # the editor may lock a wider or tighter window than the candidate card, as
-    # long as it still cuts on sentence boundaries and stays inside the band
+
     t0 = float(edit.get("t0", card["t0"]))
     t1 = float(edit.get("t1", card["t1"]))
     plan = timeline.build(words, t0, t1, edit)
@@ -150,56 +148,122 @@ def main() -> int:
     if not plan["within_band"]:
         raise SystemExit(f"cut plan {plan['duration']}s outside band {plan['band']} "
                          f"— widen the moment, not the rule")
-    store.artifact(cid, f"cutplan_{cid_clip}", plan)
 
-    face = stable_face(t0, t1, float(edit.get("face_sample_step", 1.0)))
-    if face is None:
-        raise SystemExit("no stable face found in the window — do not crop blind")
-    plan["framing_decision"] = {"method": "recurring face cluster over the whole window",
-                                "face": face,
-                                "note": "camera is static; punch-ins share the same axis"}
+    # --- picture: one crop per camera shot, never one crop for the whole clip
+    shots = framing.analyse(SRC, t0, t1, float(edit.get("face_fps", 4.0)))
+    store.artifact(cid, f"framing_{cid_clip}", shots)
+    if shots["face_coverage"] < float(edit.get("min_face_coverage", 0.97)):
+        raise SystemExit(f"only {shots['face_coverage']:.0%} of the window has a face on "
+                         f"screen — reframe or move the moment")
+    shot_ok = [s for s in shots["shots"] if s["speaker"]]
+    store.gate(cid, cid_clip, "FRAMING_VALID", True,
+               f"{len(shot_ok)} shots, coverage {shots['face_coverage']:.0%}")
+
+    pieces = []
+    for seg in plan["segments"]:
+        inside = [sh for sh in shot_ok
+                  if sh["t1"] > seg["src_in"] + 0.02 and sh["t0"] < seg["src_out"] - 0.02]
+        if not inside:
+            raise SystemExit(f"segment {seg['index']} has no framed shot")
+        for sh in inside:
+            a0 = max(seg["src_in"], sh["t0"])
+            a1 = min(seg["src_out"], sh["t1"])
+            if pieces and a1 - a0 < 0.20:
+                # too short to read as its own shot: absorb it rather than drop it
+                # (dropping shortened the picture against the audio)
+                pieces[-1]["src_out"] = round(max(pieces[-1]["src_out"], a1), 3)
+                continue
+            pieces.append({"src_in": round(a0, 3), "src_out": round(a1, 3),
+                           "shot": sh, "segment": seg["index"]})
+
+    # beat structure: a long take gets a punch-in halfway so the frame changes
+    # size every few seconds instead of sitting still for the whole sentence
+    beat = float(edit.get("beat_seconds", 4.5))
+    split = []
+    for p in pieces:
+        d = p["src_out"] - p["src_in"]
+        if d > beat * 2:
+            mid = round(p["src_in"] + d / 2, 3)
+            first = dict(p); first["src_out"] = mid
+            second = dict(p); second["src_in"] = mid; second["punch"] = True
+            split += [first, second]
+        else:
+            split.append(p)
+    pieces = split
+
+    # the picture must tile the audio exactly: same first frame, same last frame
+    total_pic = round(sum(p["src_out"] - p["src_in"] for p in pieces), 3)
+    if abs(total_pic - plan["duration"]) > 0.05:
+        raise SystemExit(f"picture {total_pic}s != audio {plan['duration']}s — refusing to "
+                         f"render a clip whose layers disagree")
+
+    # punch-in doubles: a beat reads as an edit because the frame changes size
+    punch = float(edit.get("punch_zoom", 0.90))
+    out_t = 0.0
+    prev_key = None
+    for i, p in enumerate(pieces):
+        key = (round(p["shot"]["speaker"]["cx"], 2) if p["shot"]["speaker"] else None)
+        p["punch"] = bool(p.get("punch") or p["segment"] in
+                          [s["index"] for s in plan["segments"] if s["punch"]])
+        box = framing.crop_for(p["shot"], 3840, 2160,
+                               punch=punch if p["punch"] else 1.0,
+                               target_face_frac=float(edit.get("target_face_frac", 0.30)))
+        p["crop"] = box
+        p["out_in"] = round(out_t, 3)
+        p["out_out"] = round(out_t + (p["src_out"] - p["src_in"]), 3)
+        out_t = p["out_out"]
+        prev_key = key
 
     parts = []
-    for seg in plan["segments"]:
-        box = box_from_face(face, fr, punch=seg.get("punch", False))
-        seg["crop"] = box
-        f = store.path(cid, f"work/{cid_clip}_p{seg['index']:02d}.mp4")
+    for i, p in enumerate(pieces):
+        b = p["crop"]
+        f = store.path(cid, f"work/{cid_clip}_v{i:02d}.mp4")
+        vf = (f"crop={b['w']}:{b['h']}:{b['x']}:{b['y']},"
+              f"scale={W}:{H}:flags=lanczos,setsar=1,fps={fps}")
         subprocess.run([FF, "-nostdin", "-v", "error", "-y",
-                        "-ss", f"{seg['src_in']:.3f}", "-t", f"{seg['src_out'] - seg['src_in']:.3f}",
-                        "-i", str(SRC),
-                        "-vf", f"crop={box['w']}:{box['h']}:{box['x']}:{box['y']},"
-                               f"scale={W}:{H}:flags=lanczos,setsar=1,fps={fps}", "-an",
+                        "-ss", f"{p['src_in']:.3f}", "-t", f"{p['src_out'] - p['src_in']:.3f}",
+                        "-i", str(SRC), "-vf", vf, "-an",
                         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                         "-pix_fmt", "yuv420p", str(f)], check=True)
         parts.append(f)
 
-    store.artifact(cid, f"cutplan_{cid_clip}", plan)
     lst = store.path(cid, f"work/{cid_clip}_plist.txt")
-    lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in parts))
+    lst.write_text("".join(f"file '{x.as_posix()}'\n" for x in parts))
     picture = store.path(cid, f"render/{cid_clip}_picture.mp4")
     subprocess.run([FF, "-nostdin", "-v", "error", "-y", "-f", "concat", "-safe", "0",
                     "-i", str(lst), "-c", "copy", str(picture)], check=True)
 
-    events = [{"event_id": f"p{seg['index']:02d}", "layer": "picture",
-               "source_in": seg["src_in"], "source_out": seg["src_out"],
-               "output_in": seg["out_in"], "output_out": seg["out_out"],
-               "speed": 1.0, "crop": seg["crop"], "asset": "source",
+    events = [{"event_id": f"v{i:02d}", "layer": "picture",
+               "source_in": p["src_in"], "source_out": p["src_out"],
+               "output_in": p["out_in"], "output_out": p["out_out"],
+               "speed": 1.0, "crop": p["crop"], "asset": "source",
                "provenance": "campaign source", "transition": "cut",
-               "purpose": seg["purpose"], "action": seg["text"][:90]} for seg in plan["segments"]]
-    edl = {"campaign_id": cid, "clip_id": cid_clip, "edit_version": "picture-v1",
+               "shot_kind": p["shot"]["kind"], "speaker_cx": p["shot"]["speaker"]["cx"],
+               "purpose": ("punch-in on the point" if p["punch"] else
+                           ("speaker close-up" if p["shot"]["kind"] == "CLOSE_ONE"
+                            else "speaker in wide shot")),
+               "segment": p["segment"]} for i, p in enumerate(pieces)]
+    edl = {"campaign_id": cid, "clip_id": cid_clip, "edit_version": "picture-v2",
            "timeline_convention": "zero-based output seconds, end-exclusive; "
                                   "source seconds in the original 24 fps clock",
-           "output_duration": plan["duration"], "events": events}
+           "output_duration": plan["duration"], "events": events,
+           "framing": {"method": shots["method"], "face_coverage": shots["face_coverage"],
+                       "shots": len(shots["shots"])}}
+    plan["picture_pieces"] = events
+    store.artifact(cid, f"cutplan_{cid_clip}", plan)
     store.artifact(cid, f"edl_picture_{cid_clip}", edl)
     store.gate(cid, cid_clip, "STORY_LOCKED", True,
-               f"{len(events)} thought-boundary segments, {plan['duration']}s")
+               f"{len(plan['segments'])} audio segments, {len(events)} picture pieces, "
+               f"{plan['duration']}s")
     store.gate(cid, cid_clip, "TIMELINE_LOCKED", True, "picture locked; audio/captions must follow")
-    for p in parts + [lst]:
-        p.unlink(missing_ok=True)
+    for x in parts + [lst]:
+        x.unlink(missing_ok=True)
     print(json.dumps({"clip": cid_clip, "duration": plan["duration"],
-                      "segments": len(events),
-                      "cut_points": timeline.cut_points(plan),
-                      "face_cover": round(face_cover(picture), 3),
+                      "audio_segments": len(plan["segments"]),
+                      "picture_pieces": len(events),
+                      "shot_kinds": sorted({e["shot_kind"] for e in events}),
+                      "punch_ins": sum(1 for e in events if e["purpose"].startswith("punch")),
+                      "face_coverage": shots["face_coverage"],
                       "picture": str(picture)}, indent=1))
     return 0
 

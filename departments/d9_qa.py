@@ -42,6 +42,26 @@ def probe(p: Path) -> dict:
             "audio": a.group(1) if a else None}
 
 
+def integrity(p: Path) -> dict:
+    """A file that decodes with errors freezes or blacks out in a player, which
+    reads to a viewer as 'the speaker disappeared' or 'the video is broken'."""
+    r = subprocess.run([FF, "-v", "error", "-i", str(p), "-f", "null", "-"],
+                       capture_output=True, text=True)
+    errs = [ln for ln in r.stderr.splitlines() if ln.strip()]
+    streams = {}
+    pr = subprocess.run([FF, "-hide_banner", "-i", str(p)], capture_output=True, text=True)
+    for ln in pr.stderr.splitlines():
+        m = re.search(r"Stream #\d+:\d+.*: (Video|Audio): .*?, (\d+(?:\.\d+)?) fps", ln)
+        if m:
+            streams["video_fps"] = float(m.group(2))
+        m2 = re.search(r"Duration: (\d+):(\d+):([\d.]+)", ln)
+        if m2:
+            streams["duration"] = (int(m2.group(1)) * 3600 + int(m2.group(2)) * 60
+                                   + float(m2.group(3)))
+    return {"decode_errors": len(errs), "first_error": errs[0] if errs else None,
+            **streams}
+
+
 def loudness(p: Path) -> dict:
     r = subprocess.run([FF, "-hide_banner", "-nostats", "-i", str(p), "-af",
                         "loudnorm=print_format=json", "-f", "null", "-"],
@@ -58,19 +78,46 @@ def loudness(p: Path) -> dict:
 
 def visual(p: Path, wm_band=(.03, .16)) -> dict:
     import cv2
+    from orchestrator import framing as framing_mod
     w, h = 216, 384
     raw = subprocess.run([FF, "-v", "error", "-i", str(p), "-an", "-vf",
-                          f"fps=4,scale={w}:{h},format=gray", "-f", "rawvideo",
-                          "-pix_fmt", "gray", "-"], capture_output=True).stdout
-    n = len(raw) // (w * h)
+                          f"fps=4,scale={w}:{h}", "-f", "rawvideo",
+                          "-pix_fmt", "bgr24", "-"], capture_output=True).stdout
+    n = len(raw) // (w * h * 3)
     if not n:
-        return {"faces": 0.0, "watermark": 0.0, "black_frames": 1.0}
+        return {"faces": 0.0, "watermark": 0.0, "black_frames": 1.0,
+                "longest_faceless_run_s": 99.0, "faceless_in_first_2s": True,
+                "face_center_median": None, "faces_clipped_at_edge": 1.0}
+    # QA measures the picture with the same detector the framing used (YuNet),
+    # and falls back to a Haar cascade only if the model is missing
+    yunet = None
+    if framing_mod.MODEL.exists():
+        yunet = cv2.FaceDetectorYN.create(str(framing_mod.MODEL), "", (w, h), 0.5, 0.3, 5000)
+        yunet.setInputSize((w, h))
     det = cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"))
+
+    def find_faces(bgr):
+        out = []
+        if yunet is not None:
+            ok, fs = yunet.detect(bgr)
+            if ok and fs is not None:
+                for f in fs:
+                    if f[2] >= 18 and f[14] >= 0.6:
+                        out.append(tuple(int(v) for v in f[:4]))
+            return out
+        g = cv2.equalizeHist(cv2.cvtColor(bgr, cv2.COLOR_GRAY2BGR)[:, :, 0])
+        return [tuple(int(v) for v in b) for b in det.detectMultiScale(g, 1.08, 4, minSize=(18, 18))]
     faces, wm, black, centers, clipped = 0, [], 0, [], 0
+    faceless_runs, cur = [], None
     for i in range(n):
-        g = np.frombuffer(raw[i * w * h:(i + 1) * w * h], np.uint8).reshape(h, w)
-        boxes = det.detectMultiScale(cv2.equalizeHist(g), 1.08, 4, minSize=(18, 18))
+        bgr = np.frombuffer(raw[i * w * h * 3:(i + 1) * w * h * 3], np.uint8).reshape(h, w, 3)
+        g = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        boxes = find_faces(bgr)
         faces += bool(len(boxes))
+        if not len(boxes):
+            cur = cur if cur is not None else i / 4
+        elif cur is not None:
+            faceless_runs.append((cur, i / 4)); cur = None
         if len(boxes):
             x, y, fw, fh = max(boxes, key=lambda b: b[2])
             centers.append((x + fw / 2) / w)
@@ -78,8 +125,15 @@ def visual(p: Path, wm_band=(.03, .16)) -> dict:
         y0, y1 = int(h * wm_band[0]), int(h * wm_band[1])
         wm.append(float((g[y0:y1] > 170).mean()))
         black += bool(float(g.mean()) < 8)
-    return {"faces": round(faces / n, 3), "face_center_median": round(float(np.median(centers)), 3) if centers else None,
+    if cur is not None:
+        faceless_runs.append((cur, n / 4))
+    longest = max([b - a for a, b in faceless_runs], default=0.0)
+    first_two = [r for r in faceless_runs if r[0] < 2.0]
+    return {"face_center_median": round(float(np.median(centers)), 3) if centers else None,
             "faces_clipped_at_edge": round(clipped / max(1, len(centers)), 3),
+            "faces": round(faces / n, 3),
+            "longest_faceless_run_s": round(longest, 2),
+            "faceless_in_first_2s": bool(first_two),
             "watermark": round(float(np.mean([b > .004 for b in wm])), 3),
             "black_frames": round(black / n, 3)}
 
@@ -113,6 +167,18 @@ def main() -> int:
     if not out.exists():
         raise SystemExit(f"no render at {out}")
 
+    # typed text must never sit on the speaker's face (the brief asks for it and
+    # a card over his mouth is the first thing a viewer notices)
+    caps = store.read_json(cid, f"artifacts/captions_{clip}.v1.json") or {}
+    hb = (caps.get("payload") or {}).get("hook_box") or {}
+    fb = (caps.get("payload") or {}).get("face_box_hook_window") or {}
+    if hb and fb:
+        face_y0, face_y1 = fb["top"] * 1920, fb["bottom"] * 1920
+        overlap = max(0.0, min(hb["y_bottom"], face_y1) - max(hb["y_top"], face_y0))
+        text_over_face = overlap > 0.10 * (face_y1 - face_y0)
+    else:
+        text_over_face = None
+
     wmc = brief.get("watermark", {}) or {}
     pos = wmc.get("position", "bottom-center")
     wm_w = int(wmc.get("width", 640))
@@ -124,6 +190,7 @@ def main() -> int:
         y0 = 1920 - int(wmc.get("margin_bottom", 300)) - wm_h
         band = (y0 / 1920, min(1.0, (y0 + wm_h) / 1920))
     info, loud, vis, fid = probe(out), loudness(out), visual(out, band), fidelity(clip, cid)
+    integ = integrity(out)
     at = brief.get("audio_targets", {})
     checks = {
         "length_in_window": lo <= info["duration"] <= hi,
@@ -138,9 +205,14 @@ def main() -> int:
                            and vis["faces_clipped_at_edge"] <= .05),
         "watermark_on_screen": vis["watermark"] >= .9,
         "no_black_frames": vis["black_frames"] <= .02,
+        "decodes_clean": integ["decode_errors"] == 0,
+        "speaker_on_screen_throughout": vis["longest_faceless_run_s"] <= 0.5,
+        "speaker_on_screen_in_hook": not vis["faceless_in_first_2s"],
+        "picture_and_sound_same_length": abs((integ.get("duration") or 0) - info["duration"]) <= 0.05,
         "opening_is_spoken": fid["opening_spoken_in_clip"],
         "hook_numbers_supported": fid["hook_numbers_supported"],
         "payoff_present": fid["payoff_present"],
+        "no_text_over_face": (text_over_face is False) if text_over_face is not None else True,
     }
     verdict = "PASS" if all(checks.values()) else "REVISE"
     finding = {
@@ -149,7 +221,8 @@ def main() -> int:
         "severity": "blocker" if not checks["length_in_window"] or not checks["payoff_present"] else "major",
         "source_timestamp": None, "output_timestamp": None,
         "observation": "; ".join(k for k, v in checks.items() if not v) or "all checks passed",
-        "evidence": json.dumps({"file": info, "loudness": loud, "visual": vis, "fidelity": fid}),
+        "evidence": json.dumps({"file": info, "loudness": loud, "visual": vis,
+                                "fidelity": fid, "integrity": integ}),
         "corrective_action": ("rebuild the failing department only: "
                               + ", ".join(k for k, v in checks.items() if not v)) if verdict != "PASS" else "none",
         "acceptance_test": "same check re-run on the rebuilt artifact returns true",
@@ -159,7 +232,10 @@ def main() -> int:
     store.review(cid, finding)
     store.gate(cid, clip, "QA_APPROVED", verdict == "PASS", finding["observation"])
     print(json.dumps({"clip": clip, "verdict": verdict, "checks": checks,
-                      "file": info, "loudness": loud, "visual": vis, "fidelity": fid}, indent=1))
+                      "file": info, "loudness": loud, "visual": vis, "fidelity": fid,
+                      "integrity": integ,
+                      "hook_box": hb, "face_box_hook_window": fb,
+                      "text_over_face": text_over_face}, indent=1))
     return 0 if verdict == "PASS" else 1
 
 

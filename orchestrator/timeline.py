@@ -54,16 +54,22 @@ def is_filler(text: str, phrases) -> bool:
 def build(words, t0, t1, cfg=None):
     """Return the cut plan for one clip.
 
+    A clip is a set of *contiguous* source ranges. Adjacent sentences are kept
+    together whenever the pause between them is short, so the picture and the
+    dialogue cover exactly the same frames — the way an editor cuts: dead air is
+    removed, not replaced with silence or a freeze. Only pauses longer than
+    `max_gap` become a cut.
+
     cfg keys (all optional):
-      remove_phrases : list[str]  sentences/phrases the editor drops as filler
-      max_gap        : float      silence kept between kept segments (default .20)
-      pad_in/pad_out : float      air kept either side of a cut (default .07/.10)
+      remove_phrases : list[str]  sentences the editor drops as filler
+      max_gap        : float      longest pause kept inline (default .60)
       min_dur/max_dur: float      hard band for the finished clip
       punch_on_number: bool       punch in on sentences that carry a number
       punch_phrases  : list[str]  when given, only these sentences are punched
+      pad_in/pad_out : float      air kept either side of a hard cut
     """
     cfg = cfg or {}
-    max_gap = float(cfg.get("max_gap", 0.20))
+    max_gap = float(cfg.get("max_gap", 0.60))
     punch_on_number = bool(cfg.get("punch_on_number", True))
     punch_phrases = [pl.lower() for pl in (cfg.get("punch_phrases") or [])]
     remove = cfg.get("remove_phrases") or []
@@ -76,64 +82,63 @@ def build(words, t0, t1, cfg=None):
     for s in sents:
         a = max(s["t"], t0)
         b = min(s["e"], t1)
-        if b - a < 0.25:
+        if b - a < 0.25 or is_filler(s["text"], remove):
             continue
-        if is_filler(s["text"], remove):
-            continue
-        kept.append({"src_in": round(a, 3), "src_out": round(b, 3),
-                     "text": s["text"], "removed": False})
-
+        kept.append({"src_in": a, "src_out": b, "text": s["text"]})
     if not kept:
         raise SystemExit("cut plan: every sentence was removed as filler")
 
-    # handles: every cut keeps a few frames of air either side so a word onset or
-    # release is never shaved off. Segments may not overlap each other.
+    # contiguous runs: keep the pause inline while it is short enough to hold
+    runs = [dict(kept[0])]
+    for k in kept[1:]:
+        if k["src_in"] - runs[-1]["src_out"] <= max_gap:
+            runs[-1]["src_out"] = max(runs[-1]["src_out"], k["src_out"])
+            runs[-1]["text"] += " " + k["text"]
+        else:
+            runs.append(dict(k))
+
+    # handles: keep a few frames either side of a hard cut so no word onset or
+    # release is shaved; runs may not grow into each other
     pad_in = float(cfg.get("pad_in", 0.07))
     pad_out = float(cfg.get("pad_out", 0.10))
-    for i, k in enumerate(kept):
-        lo = kept[i - 1]["src_out"] + 0.02 if i else t0
-        hi = kept[i + 1]["src_in"] - 0.02 if i + 1 < len(kept) else t1
-        k["src_in"] = round(max(k["src_in"] - pad_in, min(lo, k["src_in"])), 3)
-        k["src_out"] = round(min(k["src_out"] + pad_out, max(hi, k["src_out"])), 3)
+    for i, r in enumerate(runs):
+        lo = runs[i - 1]["src_out"] + 0.02 if i else t0
+        hi = runs[i + 1]["src_in"] - 0.02 if i + 1 < len(runs) else t1
+        r["src_in"] = round(max(r["src_in"] - pad_in, min(lo, r["src_in"])), 3)
+        r["src_out"] = round(min(r["src_out"] + pad_out, max(hi, r["src_out"])), 3)
 
-    # tighten: keep a short, natural pause between segments instead of dead air
     segs, out_t = [], 0.0
-    for i, k in enumerate(kept):
-        d = k["src_out"] - k["src_in"]
-        lead = 0.0 if i == 0 else max_gap
-        seg = {"index": i, "src_in": k["src_in"], "src_out": k["src_out"],
-               "out_in": round(out_t + lead, 3), "out_out": round(out_t + lead + d, 3),
-               "text": k["text"],
-               "lead": lead,
-               "number": bool(re.search(r"\d|\$|percent", k["text"], re.I)),
-               "purpose": "speaker framing"}
-        want_punch = seg["number"]
+    for i, r in enumerate(runs):
+        d = r["src_out"] - r["src_in"]
+        number = bool(re.search(r"\d|\$|percent", r["text"], re.I))
+        want_punch = number
         if punch_phrases:
-            want_punch = any(pl in _norm(k["text"]) for pl in punch_phrases)
-        if punch_on_number and want_punch:
-            seg["purpose"] = "punch-in on the number"
-        seg["punch"] = bool(punch_on_number and want_punch)
+            want_punch = any(pl in _norm(r["text"]) for pl in punch_phrases)
+        seg = {"index": i, "src_in": round(r["src_in"], 3), "src_out": round(r["src_out"], 3),
+               "out_in": round(out_t, 3), "out_out": round(out_t + d, 3),
+               "text": r["text"].strip(), "number": number,
+               "punch": bool(punch_on_number and want_punch),
+               "purpose": ("punch-in on the number" if (punch_on_number and want_punch)
+                           else "speaker framing")}
         segs.append(seg)
         out_t = seg["out_out"]
 
     total = round(out_t, 3)
     lo = float(cfg.get("min_dur", 0) or 0)
     hi = float(cfg.get("max_dur", 0) or 0)
-    if hi and total > hi:                       # drop whole tail sentences, never trim words
-        while segs and (segs[-1]["out_out"] > hi) and len(segs) > 1:
+    if hi and total > hi:                       # drop whole segments, never trim words
+        while len(segs) > 1 and segs[-1]["out_out"] > hi:
             segs.pop()
-        # rebuild output clock
         acc = 0.0
-        for i, s in enumerate(segs):
-            lead = 0.0 if i == 0 else max_gap
+        for s in segs:
             d = s["src_out"] - s["src_in"]
-            s["out_in"] = round(acc + lead, 3)
-            s["out_out"] = round(s["out_in"] + d, 3)
+            s["out_in"] = round(acc, 3)
+            s["out_out"] = round(acc + d, 3)
             acc = s["out_out"]
         total = round(acc, 3)
     return {"t0": t0, "t1": t1, "segments": segs, "duration": total,
-            "dropped_sentences": [k["text"] for k in kept if False],
-            "band": [lo, hi], "within_band": (not lo or total >= lo) and (not hi or total <= hi)}
+            "band": [lo, hi], "within_band": (not lo or total >= lo) and (not hi or total <= hi),
+            "max_gap": max_gap}
 
 
 def src_to_out(plan, t):
@@ -160,3 +165,13 @@ def remap_words(plan, words):
 
 def cut_points(plan):
     return [s["out_in"] for s in plan["segments"][1:]]
+
+
+def verify_tiling(plan):
+    """The plan must be internally consistent: segments tile the output clock."""
+    acc = 0.0
+    for s in plan["segments"]:
+        if abs(s["out_in"] - acc) > 0.01:
+            return False
+        acc = s["out_out"]
+    return abs(acc - plan["duration"]) <= 0.01
